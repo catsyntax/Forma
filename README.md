@@ -276,4 +276,10 @@ trademarks of their owners; Forma only reads and writes their open or documented
 
 ## License
 
-See [LICENSE](LICENSE).
+Forma is free for everyone to use, study, change and share for **non-commercial** purposes: personal
+projects, study, teaching, research, and use by charities, schools and public institutions. Commercial use
+(selling it, or using it in paid work or in a company's products and services) is not allowed without
+permission from the author. The exact terms are the
+[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) in
+[LICENSE](LICENSE). For a commercial license, contact Hatef Jafari Sharami via
+[github.com/catsyntax](https://github.com/catsyntax).
