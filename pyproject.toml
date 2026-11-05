@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forma-cad"
+version = "0.5.0"
+description = "NURBS CAD in Python: 2D drafting, 3D modeling, parametric components and a node editor with environmental analysis"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+authors = [{ name = "Hatef Jafari Sharami" }]
+keywords = ["cad", "nurbs", "3d", "architecture", "parametric", "node-editor", "opencascade"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
+dependencies = [
+    "PySide6-Essentials>=6.6",
+    "pyvista>=0.43",
+    "pyvistaqt>=0.11",
+    "vtk>=9.3",
+    "numpy>=1.24",
+    "rhino3dm>=8.0",
+    "cadquery-ocp>=7.8",
+    "trimesh>=4.0",
+    "ezdxf>=1.1",
+    "pycollada>=0.8",
+    "svgelements>=1.9",
+    "lxml>=5.0",
+    "networkx>=3.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.gui-scripts]
+forma = "forma.__main__:run"
+
+[tool.setuptools]
+packages = ["forma", "forma.nodes"]
+
+[tool.setuptools.package-data]
+forma = ["resources/*"]

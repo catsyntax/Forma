@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" width="1080" height="1080">
+  <title>Forma</title>
+  <circle cx="540" cy="540" r="540" fill="#ffffff"/>
+  <g stroke="#12428f" stroke-width="110" stroke-linecap="round" fill="none">
+    <line x1="468" y1="182" x2="468" y2="525"/>
+    <line x1="742" y1="237" x2="637" y2="342"/>
+    <line x1="237" y1="337" x2="342" y2="442"/>
+    <line x1="748" y1="468" x2="898" y2="468"/>
+    <line x1="182" y1="610" x2="372" y2="610"/>
+    <line x1="597" y1="497" x2="843" y2="743"/>
+    <line x1="550" y1="630" x2="337" y2="843"/>
+    <line x1="610" y1="748" x2="610" y2="898"/>
+  </g>
+</svg>
