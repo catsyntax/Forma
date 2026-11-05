@@ -19,7 +19,7 @@ jobs:
         include:
           - os: macos-14
             asset: Forma-macOS-AppleSilicon.dmg
-          - os: macos-13
+          - os: macos-15-intel
             asset: Forma-macOS-Intel.dmg
           - os: windows-latest
             asset: Forma-Windows.zip
