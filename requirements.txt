@@ -11,3 +11,4 @@ pycollada>=0.8
 svgelements>=1.9
 lxml>=5.0
 networkx>=3.0
+scipy>=1.10
