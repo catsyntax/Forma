@@ -523,3 +523,5 @@ def n_color(Mesh=None, Values=None, Min=None, Max=None, **kw):
 
 
 from . import envlib  # noqa: E402,F401  (climate, daylight, energy and movement libraries)
+
+from . import archlib  # noqa: E402,F401  (parametric architecture)

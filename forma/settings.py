@@ -29,6 +29,7 @@ class Settings:
     theme: str = "Dark"
     colors: dict = field(default_factory=dict)  # per-key overrides on top of the preset
     gradient_3d: bool = True
+    ambient_occlusion: bool = False  # soft contact shadows in the 3D view (SSAO); can be slow on older GPUs
     font_size: int = 12
     grid_spacing: float = 100.0
     grid_extent: int = 50
@@ -40,6 +41,7 @@ class Settings:
     units: str = "mm"
     always_show_compute_dialog: bool = False
     compute_dialog_delay_ms: int = 400
+    shortcuts: dict = field(default_factory=dict)   # action id -> key sequence ('' = none), overrides defaults
 
     def color(self, key):
         return self.colors.get(key) or PRESETS.get(self.theme, PRESETS["Dark"])[key]

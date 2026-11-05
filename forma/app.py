@@ -31,14 +31,14 @@ def _trace(msg):
 
 DRAFT_TOOLS = ["Line", "Polyline", "Rectangle", "Circle", "Arc", "Ellipse", "Polygon", "InterpCrv", "|",
                "Move", "Copy", "Rotate", "Scale", "Mirror", "Offset", "Trim", "Split", "Array", "Join", "Explode", "|",
-               "PointsOn", "PointsOff", "|", "Insert", "MakeComponent", "Connect", "|", "Distance", "Length", "Area"]
+               "PointsOn", "PointsOff", "|", "SectionPlane", "Insert", "MakeComponent", "Connect", "|", "Distance", "Length", "Area"]
 MODEL_TOOLS = ["Line", "Polyline", "Circle", "Rectangle", "Curve", "InterpCrv", "|",
                "Box", "Sphere", "Cylinder", "Cone", "Torus", "Plane", "|",
                "Extrude", "Loft", "Revolve", "Pipe", "PlanarSrf", "|",
                "Move", "Copy", "Rotate", "Scale", "Mirror", "Array", "||",
                "Trim", "Split", "|", "BooleanUnion", "BooleanDifference", "BooleanIntersection", "FilletEdge", "ChamferEdge", "Sweep1", "Intersect", "DupEdge", "JoinSrf", "Cap", "|",
                "PointsOn", "PointsOff", "SelAllPoints", "|",
-               "Insert", "MakeComponent", "Connect", "Chain", "|", "Make2D"]
+               "Insert", "MakeComponent", "Connect", "Chain", "|", "SectionPlane", "Make2D"]
 COMPONENT_TOOLS = ["Insert", "MakeComponent", "EditComponent", "CloseComponent", "MakeUnique", "|",
                    "Connect", "Chain", "|", "Move", "Copy", "Rotate", "Mirror", "Array", "|", "Explode", "Delete"]
 NODE_TOOLS = ["Move", "Copy", "Rotate", "Scale", "|", "Box", "Extrude", "Loft", "|", "Distance", "Area", "Volume"]
@@ -226,16 +226,34 @@ class MainWindow(QtWidgets.QMainWindow):
             vbar.addSeparator()
             a = vbar.addAction("Zoom all")
             a.triggered.connect(lambda: self.view_action("zoom_extents"))
+            vbar.addSeparator()
+            a = vbar.addAction("Export drawing...")
+            a.setToolTip("Export this view and any section views to PDF, DWG, DXF, PNG or SVG (Ctrl+Alt+E)")
+            a.triggered.connect(self.export_drawing)
         lay.addWidget(top)
         split = QtWidgets.QSplitter()
         if space == "2d":
+            from .sectionview import SectionView
             holder = QtWidgets.QWidget()
             hl = QtWidgets.QVBoxLayout(holder)
             hl.setContentsMargins(0, 0, 0, 0)
             hl.setSpacing(0)
             hl.addWidget(vbar)
-            hl.addWidget(view, 1)
+            vsplit = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+            vsplit.addWidget(view)
+            # two section viewports (front and back of the section plane), shown while a section exists
+            self.section_row = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+            self.section_views = [SectionView(self.doc, self.settings, side=1), SectionView(self.doc, self.settings, side=-1)]
+            for sv in self.section_views:
+                self.section_row.addWidget(sv)
+            vsplit.addWidget(self.section_row)
+            vsplit.setStretchFactor(0, 3)
+            vsplit.setStretchFactor(1, 2)
+            self.section_row.setVisible(False)
+            self._draft_vsplit = vsplit
+            hl.addWidget(vsplit, 1)
             split.addWidget(holder)
+            self.doc.subscribe(self._sections_changed)
         else:
             split.addWidget(view)
         side = QtWidgets.QWidget()
@@ -487,6 +505,26 @@ class MainWindow(QtWidgets.QMainWindow):
             key = {"toggle_grid": "show_grid", "toggle_snap": "snap", "toggle_ortho": "ortho", "toggle_osnap": "osnap"}[action]
             self.toggle_buttons[key].setChecked(not getattr(self.settings, key))
 
+    def _sections_changed(self, what):
+        if what not in ("changed", "loaded", "layers", "selection"):
+            return
+        has = bool(self.doc.sections())
+        row = getattr(self, "section_row", None)
+        if row is None:
+            return
+        if has and not row.isVisible():
+            row.setVisible(True)
+            h = max(self._draft_vsplit.height(), 600)
+            self._draft_vsplit.setSizes([int(h * 0.55), int(h * 0.45)])
+        elif not has and row.isVisible():
+            row.setVisible(False)
+        if not has:
+            return
+        if what == "selection" and not any(g.data.get("section") for g in self.doc.selected()):
+            return
+        for sv in self.section_views:
+            sv.schedule()
+
     def set_isolate(self, on):
         if on:
             ids = [g.id for g in self.doc.selected()]
@@ -596,6 +634,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._act(m, "Import...", self.file_import, "Ctrl+I")
         self._act(m, "Export...", self.file_export, "Ctrl+E")
         self._act(m, "Export selected...", lambda: self.file_export(selected=True), "Ctrl+Shift+E")
+        self._act(m, "Export 2D drawing (PDF, DWG, DXF, PNG, SVG)...", self.export_drawing, "Ctrl+Alt+E")
         m.addSeparator()
         self._act(m, "Supported formats...", self.show_formats)
         m.addSeparator()
@@ -643,7 +682,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._act(m, "Commands and shortcuts", self.show_help, "F1")
         self._act(m, "About", lambda: QtWidgets.QMessageBox.about(self, APP_NAME, f"{APP_NAME} {__version__}\n"
                                                                     "2D drafting, 3D modeling, components and nodes.\n\n"
-                                                                    "Created by Hatef Jafari Sharami"))
+                                                                    "Created by catsyntax"))
 
     def _act(self, menu, text, fn, shortcut=None):
         a = menu.addAction(text)
@@ -653,14 +692,52 @@ class MainWindow(QtWidgets.QMainWindow):
             a.setShortcutContext(QtCore.Qt.ApplicationShortcut)
         return a
 
-    def _shortcuts(self):
-        for key, fn in (("F8", lambda: self.view_action("toggle_ortho")), ("F9", lambda: self.view_action("toggle_snap")),
-                        ("F3", lambda: self.view_action("toggle_osnap")), ("F7", lambda: self.view_action("toggle_grid")),
-                        ("Ctrl+Shift+P", self.palette), ("Ctrl+Shift+H", self.toggle_isolate),
-                        ("F10", self.toggle_points), ("F11", lambda: self.run_command("PointsOff"))):
+    def shortcut_actions(self):
+        """Everything that can have a keyboard shortcut: (id, label, group, default key, function)."""
+        acts = [
+            ("app:toggle_osnap", "Object snaps on/off", "Toggles", "F3", lambda: self.view_action("toggle_osnap")),
+            ("app:toggle_grid", "Grid on/off", "Toggles", "F7", lambda: self.view_action("toggle_grid")),
+            ("app:toggle_ortho", "Ortho on/off", "Toggles", "F8", lambda: self.view_action("toggle_ortho")),
+            ("app:toggle_snap", "Grid snap on/off", "Toggles", "F9", lambda: self.view_action("toggle_snap")),
+            ("app:points", "Control points on/off", "Editing", "F10", self.toggle_points),
+            ("app:points_off", "Control points off", "Editing", "F11", lambda: self.run_command("PointsOff")),
+            ("app:isolate", "Isolate selection on/off", "View", "Ctrl+Shift+H", self.toggle_isolate),
+            ("app:palette", "Command palette", "General", "Ctrl+Shift+P", self.palette),
+            ("app:export2d", "Export 2D drawing", "File", "", self.export_drawing),
+            ("app:zoom_all", "Zoom all", "View", "", lambda: self.view_action("zoom_extents")),
+            ("app:view_top", "3D: Top view", "View", "", lambda: self.view_action("view_top")),
+            ("app:view_persp", "3D: Perspective view", "View", "", lambda: self.view_action("view_persp")),
+            ("app:view_iso", "3D: Isometric view", "View", "", lambda: self.view_action("view_iso")),
+        ]
+        seen = set()
+        for key in sorted(K.COMMANDS, key=lambda k: K.COMMANDS[k].name.lower()):
+            cmd = K.COMMANDS[key]
+            name = getattr(cmd, "name", key)
+            if name in seen or name == "GumballValue":
+                continue
+            seen.add(name)
+            acts.append(("cmd:" + name, name, getattr(cmd, "group", "Commands") or "Commands", "",
+                         lambda n=name: self.run_command(n)))
+        return acts
+
+    def apply_shortcuts(self):
+        for sc in getattr(self, "_shortcut_objs", []):
+            sc.setEnabled(False)
+            sc.setParent(None)
+            sc.deleteLater()
+        self._shortcut_objs = []
+        custom = getattr(self.settings, "shortcuts", {}) or {}
+        for aid, label, group, default, fn in self.shortcut_actions():
+            key = custom.get(aid, default)
+            if not key:
+                continue
             sc = QtGui.QShortcut(QtGui.QKeySequence(key), self)
             sc.setContext(QtCore.Qt.ApplicationShortcut)
             sc.activated.connect(fn)
+            self._shortcut_objs.append(sc)
+
+    def _shortcuts(self):
+        self.apply_shortcuts()
 
     # ================================================================ actions
     def palette(self):
@@ -695,6 +772,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def apply_settings(self):
         self._apply_style()
+        self.apply_shortcuts()
         self.doc.units = self.settings.units
         self.view3d.apply_appearance()
         self.components.preview.apply_appearance()
@@ -818,6 +896,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         QtWidgets.QApplication.restoreOverrideCursor()
         self.message(f"Exported {n} objects to {os.path.basename(path)}." + (" " + " ".join(warnings[:2]) if warnings else ""))
+
+    def export_drawing(self):
+        from .exportdialog import ExportDrawingDialog
+        ExportDrawingDialog(self).exec()
 
     def show_formats(self):
         from .exchange import FORMATS

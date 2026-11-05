@@ -831,7 +831,11 @@ def bspline_surface_of_face(face):
     """
     from OCP.Geom import Geom_RectangularTrimmedSurface
     u0, u1, v0, v1 = BRepTools.UVBounds_s(face)
-    srf = BRep_Tool.Surface_s(face)
+    loc = TopLoc_Location()
+    srf = BRep_Tool.Surface_s(face, loc)
+    if not loc.IsIdentity():
+        # the face sits at a placement (after Move/Rotate): put the surface where you see it
+        srf = srf.Transformed(loc.Transformation())
     bs = GeomConvert.SurfaceToBSplineSurface_s(Geom_RectangularTrimmedSurface(srf, u0, u1, v0, v1))
     f2 = BRepBuilderAPI_MakeFace(bs, 1e-7).Face()
     return bs, f2
@@ -1334,3 +1338,21 @@ def remove_faces(g: Geom, idxs):
         if _key(f) not in used:
             out.append(make(_face(f), "Surface", **kw))
     return out
+
+
+def surface_through_grid(P, tol=None, **kw):
+    """Smooth NURBS surface approximating a (nu, nv, 3) grid of points (well-behaved control net)."""
+    from OCP.GeomAPI import GeomAPI_PointsToBSplineSurface
+    from OCP.GeomAbs import GeomAbs_C2
+    try:
+        from OCP.collections import Array2_gp_Pnt as A2P
+    except ImportError:
+        from OCP.TColgp import TColgp_Array2OfPnt as A2P
+    P = np.asarray(P, float)
+    arr = A2P(1, P.shape[0], 1, P.shape[1])
+    for i in range(P.shape[0]):
+        for j in range(P.shape[1]):
+            arr.SetValue(i + 1, j + 1, _pnt(P[i, j]))
+    span = float(np.linalg.norm(P.max((0, 1)) - P.min((0, 1)))) or 1.0
+    bs = GeomAPI_PointsToBSplineSurface(arr, 3, 3, GeomAbs_C2, tol or span * 2e-4).Surface()
+    return make(BRepBuilderAPI_MakeFace(bs, 1e-6).Face(), "Surface", **kw)

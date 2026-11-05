@@ -75,8 +75,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key><string>Forma</string>
-  <key>NSHumanReadableCopyright</key><string>Created by Hatef Jafari Sharami</string>
-  <key>CFBundleGetInfoString</key><string>Forma, created by Hatef Jafari Sharami</string>
+  <key>NSHumanReadableCopyright</key><string>Created by catsyntax</string>
+  <key>CFBundleGetInfoString</key><string>Forma, created by catsyntax</string>
   <key>CFBundleDisplayName</key><string>Forma</string>
   <key>CFBundleIdentifier</key><string>app.forma.cad</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>

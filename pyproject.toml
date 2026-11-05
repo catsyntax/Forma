@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "forma-cad"
-version = "0.5.0"
+version = "0.6.0"
 description = "NURBS CAD in Python: 2D drafting, 3D modeling, parametric components and a node editor with environmental analysis"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 license = { text = "PolyForm-Noncommercial-1.0.0" }
-authors = [{ name = "Hatef Jafari Sharami" }]
+authors = [{ name = "catsyntax" }]
 keywords = ["cad", "nurbs", "3d", "architecture", "parametric", "node-editor", "opencascade"]
 classifiers = [
     "License :: Other/Proprietary License",

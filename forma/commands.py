@@ -633,6 +633,34 @@ def cmd_extract_srf(ctx):
     yield
 
 
+@command("SectionPlane", ("sec", "section", "clippingplane"), group="View",
+         help="Place a vertical section plane (a rectangle you can move and rotate). The Draft tab then shows "
+              "the cut from both sides.")
+def cmd_section_plane(ctx):
+    from . import section as S
+    a = yield GetPoint("Start of the section line")
+    b = yield GetPoint("End of the section line", base=a, preview=lambda p: [G.line(a, p)])
+    zs = [0.0, 3000.0]
+    for g in ctx.doc.visible("3d"):
+        try:
+            lo, hi = g.bbox()
+            zs += [lo[2], hi[2]]
+        except Exception:
+            pass
+    z0, z1 = min(zs), max(zs)
+    pad = 0.05 * (z1 - z0)
+    if not ctx.doc.layer("Sections"):
+        ctx.doc.add_layer("Sections", "#e0525b")
+    ctx.commit("Section plane")
+    k = len(ctx.doc.sections())
+    g = S.make_plane(a, b, z0 - pad, z1 + pad, name=f"Section {chr(65 + k % 26)}")
+    ctx.doc.add(g, select=True)
+    ctx.msg(f"{g.name} added. Open the Draft tab to see the cut from both sides; move or rotate the plane "
+            "with the gumball and the section views follow.")
+    return
+    yield
+
+
 @command("Isolate", ("iso", "hideothers"), group="View",
          help="Show only the selected objects; everything else is hidden until Unisolate.")
 def cmd_isolate(ctx):

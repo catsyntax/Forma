@@ -3,24 +3,25 @@
 <h1 align="center">Forma</h1>
 
 <p align="center"><b>NURBS CAD in Python: 2D drafting, 3D modeling, parametric components, and a node editor with
-daylight, energy and space-syntax analysis.</b><br>Runs on macOS, Windows and Linux. Created by Hatef Jafari Sharami.</p>
+daylight, energy and space-syntax analysis.</b><br>Runs on macOS, Windows and Linux. Created by catsyntax.</p>
 
-![Forma, Model workspace](docs/screenshots/model.png)
+![Forma: parametric stadium, twisting diagrid towers and a free-form pavilion](docs/screenshots/model.png)
 
-## Install in 3 steps
+## Download
+
+**Ready-to-install apps for Mac, Windows and Linux: see [Download App](Download%20App/README.md).**
+Download, open, done. No Python needed.
+
+Or run it from the source code in 3 steps:
 
 1. **Download** this repository: the green **Code** button → **Download ZIP**. Unzip it anywhere.
-2. **Double-click the start file** for your computer:
-   - macOS: `start_mac.command`
-   - Windows: `start_windows.bat`
-   - Linux: `start_linux.sh`
-3. **Wait for the first setup** (5 to 10 minutes, about 1 GB download). After that Forma opens in seconds.
+2. **Double-click the start file** for your computer: `start_mac.command`, `start_windows.bat` or `start_linux.sh`.
+3. **Wait for the first setup** (5 to 10 minutes, about 1 GB). After that Forma opens in seconds.
 
-You don't need to install Python yourself. The step-by-step guide for every
-system, and fixes for common problems, is in **[INSTALL.md](INSTALL.md)**.
-
-Then open **`examples/sample_project.forma`** (File → Open) to see everything at once: drawings, NURBS
-solids and surfaces, components and an analysis graph.
+Step-by-step help for every system is in **[INSTALL.md](INSTALL.md)**. Then open
+**`examples/parametric_masterplan.forma`** (File → Open): a stadium, three twisting diagrid towers and a
+free-form pavilion on a landscaped site, with a solar-radiation study in the node graph.
+`examples/sample_project.forma` is a smaller starter project.
 
 ## Four workspaces, one model
 
@@ -33,13 +34,32 @@ solids and surfaces, components and an analysis graph.
 
 All four share one document, layers, undo history and the command line. (On a Mac, Ctrl in shortcuts is Cmd.)
 
+### Parametric architecture
+
 | | |
 |---|---|
-| ![Draft, top view](docs/screenshots/draft_top.png) **Draft**, top view | ![Draft, front view](docs/screenshots/draft_front.png) **Draft**, front view |
-| ![Components](docs/screenshots/components.png) **Components**, parametric library | ![Face editing](docs/screenshots/model_face_points.png) **Sub-object editing**: a face picked with Cmd/Ctrl+Shift-click |
-| ![Nodes: sun hours and energy](docs/screenshots/nodes_sun_energy.png) **Nodes**: sun hours with shading, energy report | ![Nodes: daylight factor](docs/screenshots/nodes_daylight.png) **Daylight factor** of a room |
-| ![Nodes: space syntax](docs/screenshots/nodes_space_syntax.png) **Space syntax**: visibility graph integration | ![Nodes: shadow study](docs/screenshots/nodes_shadows.png) **Shadow study** |
-| ![Nodes: solar gains](docs/screenshots/nodes_solar_gains.png) **Solar gains** by orientation | ![Light theme](docs/screenshots/model_light_theme.png) **Light theme** |
+| ![Stadium](docs/screenshots/hero_stadium.png) **Parametric stadium**: raked seating bowl, saddle roof and ribbed facade | ![Towers](docs/screenshots/hero_tower.png) **Twisting diagrid towers** |
+| ![Pavilion](docs/screenshots/hero_pavilion.png) **Free-form pavilion** on funnel columns | ![Control points](docs/screenshots/nurbs_control_points.png) **NURBS control points** of the pavilion roof |
+
+### Built with nodes, live
+
+Every building above comes from a node in the **Architecture** library. Drag the sliders and the model
+rebuilds in the 3D view. Load them from **Analysis examples** in the Nodes toolbar.
+
+| | |
+|---|---|
+| ![Tower nodes](docs/screenshots/nodes_tower.png) **Diagrid Tower** node: height, twist, taper, lobes, diagrid | ![Stadium nodes](docs/screenshots/nodes_stadium.png) **Stadium** node: size, tiers, ribs, roof saddle |
+| ![Pavilion nodes](docs/screenshots/nodes_pavilion.png) **Free-form Pavilion** node | ![Radiation](docs/screenshots/nodes_radiation.png) **Solar radiation** on a tower, shaded by its neighbours |
+
+### Drawings, sections and analysis
+
+| | |
+|---|---|
+| ![Draft and sections](docs/screenshots/draft_sections.png) **Section plane**: the Draft tab shows the cut from both sides | ![Export](docs/screenshots/export_dialog.png) **Export 2D drawings** to PDF, DWG, DXF, PNG or SVG |
+| ![Draft top](docs/screenshots/draft_top.png) **Draft**, top view | ![Components](docs/screenshots/components.png) **Components**, parametric library |
+| ![Daylight factor](docs/screenshots/nodes_daylight.png) **Daylight factor** of a room | ![Space syntax](docs/screenshots/nodes_space_syntax.png) **Space syntax**: visibility graph |
+| ![Shadows](docs/screenshots/nodes_shadows.png) **Shadow study** | ![Solar gains](docs/screenshots/nodes_solar_gains.png) **Solar gains** by orientation |
+| ![Shortcuts](docs/screenshots/settings_shortcuts.png) **Your own shortcuts** for every command (Settings → Shortcuts) | ![Light theme](docs/screenshots/model_light_theme.png) **Light theme** |
 
 **NURBS-based.** Curves are NURBS (lines, arcs and circles convert exactly). Surfaces and solids are exact
 NURBS boundary representations (B-reps) built on **OpenCascade**, the open-source kernel behind FreeCAD,
@@ -87,6 +107,14 @@ On macOS you can also build a real **Forma.app** with `packaging/make_mac_app.co
   (flat-faced solids), **Cmd/Ctrl-drag** an arrow to push/pull it (outward adds, inward cuts), or run **ExtractSrf**
   to copy the face out as its own surface.
 - **Select one edge**: **Cmd+Option+Shift-click** (Ctrl+Alt+Shift-click) it, then drag the gumball to move it.
+- **Sections:** run **SectionPlane** and click two points. A vertical section plane appears (move, rotate or
+  resize it with the gumball). The **Draft** tab then shows two extra viewports with the cut seen from each
+  side: cut lines in red, cut solids filled, and everything beyond drawn as an elevation.
+- **2D drawings:** **File → Export 2D drawing** (Ctrl+Alt+E, or *Export drawing* in the Draft view bar) opens a
+  window where you tick the viewports (Draft view, Section A, Section B) and choose **PDF** (true scale 1:20 to
+  1:5000 or fit, A4 to A0, title block), **DWG/DXF** (true-scale linework on layers), **PNG** or **SVG**.
+- **Shortcuts:** **Settings → Shortcuts** lists every command and action; click a cell and press the keys.
+  Clashes are marked red.
 - **Delete or Backspace** deletes the selection. With a face, edge or points picked, it deletes just those:
   a face leaves an open polysurface, an edge removes the faces along it, a polyline segment splits the curve in
   two, and points are removed from curves and meshes (on solids, the faces touching them go). Pieces that end up
@@ -163,6 +191,10 @@ so large modular models stay light.
   `~/.forma/components.json`, so they're available in every project).
 
 ## Nodes
+
+### Architecture library
+- **Stadium**, **Diagrid Tower** and **Free-form Pavilion** nodes generate complete parametric buildings
+  (NURBS surfaces plus structural members) from a few sliders. Bake them to keep them as model objects.
 
 ### Analysis libraries
 - **Climate:** Location (20 city presets), Sun Vector, Sun Path, Shadow Study (shadows on the ground at any hour).
@@ -281,5 +313,5 @@ projects, study, teaching, research, and use by charities, schools and public in
 (selling it, or using it in paid work or in a company's products and services) is not allowed without
 permission from the author. The exact terms are the
 [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) in
-[LICENSE](LICENSE). For a commercial license, contact Hatef Jafari Sharami via
+[LICENSE](LICENSE). For a commercial license, contact catsyntax via
 [github.com/catsyntax](https://github.com/catsyntax).

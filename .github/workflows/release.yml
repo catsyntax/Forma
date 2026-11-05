@@ -1,0 +1,89 @@
+name: build apps
+
+# Builds ready-to-run Forma apps for macOS (Apple Silicon + Intel), Windows and Linux and attaches them
+# to a GitHub Release. Runs when a version tag is pushed (git tag v0.6.0 && git push --tags) or by hand
+# from the Actions tab.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            asset: Forma-macOS-AppleSilicon.dmg
+          - os: macos-13
+            asset: Forma-macOS-Intel.dmg
+          - os: windows-latest
+            asset: Forma-Windows.zip
+          - os: ubuntu-22.04
+            asset: Forma-Linux.tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: System libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libegl1 libxkbcommon0 libxcb-cursor0 xvfb
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+      - name: Build with PyInstaller
+        run: pyinstaller packaging/forma.spec --noconfirm
+      - name: Smoke test the built app
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then dist/Forma.app/Contents/MacOS/Forma --smoke-test
+          elif [ "$RUNNER_OS" = "Windows" ]; then dist/Forma/Forma.exe --smoke-test
+          else dist/Forma/Forma --smoke-test; fi
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir dmg && cp -R dist/Forma.app dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname Forma -srcfolder dmg -ov -format UDZO "${{ matrix.asset }}"
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/Forma -DestinationPath "${{ matrix.asset }}"
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cp packaging/linux_install.sh dist/Forma/install.sh && chmod +x dist/Forma/install.sh
+          cp forma/resources/forma_icon.png dist/Forma/
+          tar czf "${{ matrix.asset }}" -C dist Forma
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || 'latest-build' }}
+          name: Forma ${{ github.ref_type == 'tag' && github.ref_name || 'latest build' }}
+          make_latest: true
+          files: assets/*
+          body: |
+            Ready-to-run Forma apps. Download the one for your computer, unzip / open it, and start Forma.
+            See "Download App" in the repository for step-by-step instructions.

@@ -7,8 +7,34 @@ import sys
 import time
 
 
+def smoke_test():
+    """Headless check used by the build pipeline: libraries load, the NURBS kernel and nodes work."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from forma import brep as B, parametric as PA, __version__
+    import forma.app  # noqa: F401  (Qt, VTK and every workspace import)
+    from forma.nodes.registry import NODE_TYPES
+    d = B.boolean([B.box((0, 0, 0), 1000, 1000, 1000)], [B.box((250, 250, -10), 500, 500, 1100)], "difference")
+    assert abs(d.volume() - 7.5e8) < 1e3
+    assert len(PA.stadium()) > 3
+    r = NODE_TYPES["U-Value"].fn(Thicknesses=[100], Conductivities=[0.035])
+    assert r["U"] > 0
+    # the node solver runs in a separate process: check that works in this build too
+    ctx = multiprocessing.get_context("spawn")
+    q = ctx.Queue()
+    from forma.selftest import worker_check
+    p = ctx.Process(target=worker_check, args=(q,))
+    p.start()
+    vol = q.get(timeout=120)
+    p.join(30)
+    assert abs(vol - 1e9) < 1e3, vol
+    print(f"Forma {__version__} smoke test OK", flush=True)
+    return 0
+
+
 def run():
     multiprocessing.freeze_support()
+    if "--smoke-test" in sys.argv:
+        return smoke_test()
     t0 = time.time()
     faulthandler.enable(all_threads=True)
     for sig in ("SIGTRAP", "SIGBUS", "SIGILL"):

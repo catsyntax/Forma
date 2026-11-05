@@ -142,6 +142,10 @@ class Document:
     def in_space(self, space):
         return [g for g in self.objects.values() if self._in(g, space)]
 
+    def sections(self):
+        """Section planes in the model (newest last)."""
+        return [g for g in self.objects.values() if g.data.get("section")]
+
     def _iso(self, g):
         return self.isolated is None or g.id in self.isolated
 
@@ -195,7 +199,7 @@ class Document:
         for g in self.visible(space):
             if g.id == hidden_inst:
                 continue
-            dim = bool(self.editing) and not g.data.get("_edit")
+            dim = (bool(self.editing) and not g.data.get("_edit")) or bool(g.data.get("section"))
             col = self.layer_color(g.layer)
             for part in self.expand(g):
                 out.append((g.id, part, col, dim))

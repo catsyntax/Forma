@@ -1124,7 +1124,8 @@ class NodeEditor(QtWidgets.QWidget):
         self.compute.shutdown()
 
     # ------------------------------------------------------------ demo
-    EXAMPLES = ["Sun hours + energy", "Daylight factor (room)", "Shadow study", "Solar gains by orientation",
+    EXAMPLES = ["Parametric stadium", "Twisting diagrid tower", "Free-form pavilion", "Tower: solar radiation",
+                "Sun hours + energy", "Daylight factor (room)", "Shadow study", "Solar gains by orientation",
                 "Space syntax (plan)", "Walking distance (plan)"]
 
     def load_example(self, name):
@@ -1149,7 +1150,50 @@ class NodeEditor(QtWidgets.QWidget):
         def hide(*ids):
             for i in ids:
                 N[i]["preview"] = False
-        if name == "Daylight factor (room)":
+        def slider(x, y, text, value, lo, hi, dec=0):
+            nid = add("Number Slider", x, y, props={"value": value, "min": lo, "max": hi, "decimals": dec})
+            label(nid, text)
+            return nid
+        if name == "Parametric stadium":
+            st = add("Stadium", -300, -40)
+            for k, (lab, port, v, lo, hi, dec) in enumerate((
+                    ("Length (mm)", "Length", 230000, 150000, 320000, 0), ("Width (mm)", "Width", 180000, 120000, 260000, 0),
+                    ("Roof height", "Height", 48000, 30000, 70000, 0), ("Seating tiers", "Tiers", 3, 1, 5, 0),
+                    ("Facade ribs", "Ribs", 56, 16, 120, 0), ("Roof saddle", "Saddle", 9000, 0, 25000, 0),
+                    ("Squareness", "Squareness", 2.6, 2.0, 5.0, 1))):
+                sl = slider(-640, -300 + k * 90, lab, v, lo, hi, dec)
+                self.connect(sl, "Value", st, port)
+        elif name == "Twisting diagrid tower":
+            tw = add("Diagrid Tower", -300, -40)
+            for k, (lab, port, v, lo, hi, dec) in enumerate((
+                    ("Height (mm)", "Height", 240000, 80000, 400000, 0), ("Twist (deg)", "Twist", 110, 0, 360, 0),
+                    ("Taper", "Taper", 0.62, 0.3, 1.0, 2), ("Lobes", "Lobes", 3, 2, 8, 0),
+                    ("Diagrid modules", "Modules", 10, 4, 24, 0), ("Columns", "Columns", 24, 8, 48, 0))):
+                sl = slider(-640, -260 + k * 90, lab, v, lo, hi, dec)
+                self.connect(sl, "Value", tw, port)
+        elif name == "Free-form pavilion":
+            pv_ = add("Free-form Pavilion", -300, -40)
+            for k, (lab, port, v, lo, hi, dec) in enumerate((
+                    ("Length (mm)", "Length", 110000, 50000, 200000, 0), ("Height (mm)", "Height", 19000, 8000, 35000, 0),
+                    ("Waves", "Waves", 3, 1, 6, 1), ("Columns", "Columns", 5, 2, 9, 0))):
+                sl = slider(-640, -180 + k * 90, lab, v, lo, hi, dec)
+                self.connect(sl, "Value", pv_, port)
+        elif name == "Tower: solar radiation":
+            loc = add("Location", -660, -260, values={"City": "Adelaide"})
+            tw = add("Diagrid Tower", -660, -60, values={"Height": 200000, "Twist": 90})
+            st = add("Stadium", -660, 200, values={"Length": 200000, "Width": 160000})
+            mv = add("Move", -420, 220, values={"Vector": (0, -190000, 0)})
+            rad = add("Radiation Map", -200, -100, values={"Grid Size": 7000})
+            leg = add("Panel", 80, -100)
+            self.connect(st, "Roof", mv, "Geometry")
+            for o in ("Latitude", "Longitude", "Time Zone"):
+                self.connect(loc, o, rad, o)
+            self.connect(tw, "Skin", rad, "Surfaces")
+            self.connect(mv, "Geometry", rad, "Context")
+            self.connect(rad, "Legend", leg, "Data")
+            for n_ in (tw,):
+                N[n_]["preview"] = False
+        elif name == "Daylight factor (room)":
             outer = add("Box", -600, -220, values={"X": 6000, "Y": 5000, "Z": 3000})
             inner = add("Box", -600, -60, values={"Corner": (200, 200, 200), "X": 5600, "Y": 4600, "Z": 2600})
             win = add("Box", -600, 100, values={"Corner": (1500, -100, 900), "X": 3000, "Y": 400, "Z": 1500})

@@ -394,6 +394,9 @@ class SettingsDialog(QtWidgets.QDialog):
         self.grad = QtWidgets.QCheckBox("Gradient 3D background")
         self.grad.setChecked(settings.gradient_3d)
         f.addRow("", self.grad)
+        self.ssao = QtWidgets.QCheckBox("Ambient occlusion (soft shadows in 3D)")
+        self.ssao.setChecked(getattr(settings, "ambient_occlusion", False))
+        f.addRow("", self.ssao)
         self.font = QtWidgets.QSpinBox()
         self.font.setRange(9, 20)
         self.font.setValue(settings.font_size)
@@ -434,11 +437,78 @@ class SettingsDialog(QtWidgets.QDialog):
         f2.addRow("", self.always)
         tabs.addTab(mo, "Modeling")
 
+        # Keyboard shortcuts
+        self.sc_rows = []
+        acts = parent.shortcut_actions() if parent is not None and hasattr(parent, "shortcut_actions") else []
+        if acts:
+            kb = QtWidgets.QWidget()
+            kl = QtWidgets.QVBoxLayout(kb)
+            self.sc_filter = QtWidgets.QLineEdit()
+            self.sc_filter.setPlaceholderText("Search commands...")
+            kl.addWidget(self.sc_filter)
+            self.sc_table = QtWidgets.QTableWidget(len(acts), 3)
+            self.sc_table.setHorizontalHeaderLabels(["Command", "Group", "Shortcut"])
+            self.sc_table.verticalHeader().setVisible(False)
+            self.sc_table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+            self.sc_table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+            custom = getattr(settings, "shortcuts", {}) or {}
+            for r, (aid, label, group, default, fn) in enumerate(acts):
+                self.sc_table.setItem(r, 0, QtWidgets.QTableWidgetItem(label))
+                self.sc_table.setItem(r, 1, QtWidgets.QTableWidgetItem(group))
+                for c in (0, 1):
+                    self.sc_table.item(r, c).setFlags(QtCore.Qt.ItemIsEnabled)
+                ed = QtWidgets.QKeySequenceEdit(QtGui.QKeySequence(custom.get(aid, default)))
+                try:
+                    ed.setMaximumSequenceLength(1)
+                    ed.setClearButtonEnabled(True)
+                except Exception:
+                    pass
+                ed.keySequenceChanged.connect(lambda *_: self._check_conflicts())
+                self.sc_table.setCellWidget(r, 2, ed)
+                self.sc_rows.append((aid, default, ed, r))
+            kl.addWidget(self.sc_table, 1)
+            self.sc_note = QtWidgets.QLabel("Click a shortcut cell and press the keys. Tip: use F-keys or combinations "
+                                            "with Ctrl/Cmd, Alt/Option or Shift; plain letters are used for typing commands.")
+            self.sc_note.setWordWrap(True)
+            kl.addWidget(self.sc_note)
+            rb = QtWidgets.QPushButton("Reset all shortcuts")
+            rb.clicked.connect(self._reset_shortcuts)
+            kl.addWidget(rb, 0, QtCore.Qt.AlignLeft)
+            self.sc_filter.textChanged.connect(self._filter_shortcuts)
+            tabs.addTab(kb, "Shortcuts")
+            self.resize(560, 640)
+
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Apply | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(lambda: (self.apply(), self.accept()))
         bb.rejected.connect(self.reject)
         bb.button(QtWidgets.QDialogButtonBox.Apply).clicked.connect(self.apply)
         lay.addWidget(bb)
+
+    def _filter_shortcuts(self, text):
+        t = text.lower()
+        for aid, default, ed, r in self.sc_rows:
+            label = self.sc_table.item(r, 0).text().lower() + " " + self.sc_table.item(r, 1).text().lower()
+            self.sc_table.setRowHidden(r, bool(t) and t not in label)
+
+    def _reset_shortcuts(self):
+        for aid, default, ed, r in self.sc_rows:
+            ed.setKeySequence(QtGui.QKeySequence(default))
+        self._check_conflicts()
+
+    def _check_conflicts(self):
+        seen = {}
+        for aid, default, ed, r in self.sc_rows:
+            k = ed.keySequence().toString()
+            if k:
+                seen.setdefault(k, []).append(r)
+        clash = {r for rows in seen.values() if len(rows) > 1 for r in rows}
+        for aid, default, ed, r in self.sc_rows:
+            ed.setStyleSheet("background:#5a1f24;" if r in clash else "")
+        if hasattr(self, "sc_note"):
+            self.sc_note.setText(("Some shortcuts are used twice (marked red); only one of them will work. " if clash else "") +
+                                 "Click a shortcut cell and press the keys. Tip: use F-keys or combinations with "
+                                 "Ctrl/Cmd, Alt/Option or Shift; plain letters are used for typing commands.")
+        return clash
 
     def _theme_changed(self, name):
         self.s.colors = {}
@@ -454,11 +524,18 @@ class SettingsDialog(QtWidgets.QDialog):
         preset = S.PRESETS[s.theme]
         s.colors = {k: b.color for k, b in self.btns.items() if b.color.lower() != preset[k].lower()}
         s.gradient_3d = self.grad.isChecked()
+        s.ambient_occlusion = self.ssao.isChecked()
         s.font_size = self.font.value()
         s.units = self.units.currentText()
         s.grid_spacing = self.grid.value()
         s.grid_extent = self.extent.value()
         s.compute_dialog_delay_ms = self.delay.value()
         s.always_show_compute_dialog = self.always.isChecked()
+        if self.sc_rows:
+            s.shortcuts = {}
+            for aid, default, ed, r in self.sc_rows:
+                k = ed.keySequence().toString(QtGui.QKeySequence.PortableText)
+                if k != default:
+                    s.shortcuts[aid] = k
         s.save()
         self.applied.emit()

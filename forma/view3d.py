@@ -39,6 +39,12 @@ def geom_polydata(g):
     return pv.lines_from_points(s)
 
 
+# Material colours for parametric-architecture previews (node results), so they read like a model.
+ROLE_COLORS = {"pitch": "#3f8f4e", "seating": "#8a2f3a", "roof": "#f2f2f0", "facade": "#c9ced6", "ribs": "#ffffff",
+               "trusses": "#e8e8e8", "glass": "#6f9fbf", "slabs": "#d8d8d8", "core": "#b8b2a8", "diagrid": "#f4f4f4",
+               "crown": "#e0e6ea", "shell": "#f5f5f2", "columns": "#eeeeea", "ground": "#bfc3c7"}
+
+
 class ViewCube:
     """Clickable navigation cube in the top-right corner. Click a face, edge or corner to look from there."""
     SIZE = 0.15  # fraction of viewport width
@@ -166,7 +172,7 @@ class View3D(QtWidgets.QWidget):
         self.ren = self.plotter.renderer
         # Fit the near/far planes to everything visible right before each draw, so previews,
         # big moves and overlays never get cut off by a stale clipping range.
-        self.ren.SetNearClippingPlaneTolerance(0.0005)
+        self.ren.SetNearClippingPlaneTolerance(0.001)
         self.ren.AddObserver("StartEvent", lambda *_: self.ren.ResetCameraClippingRange())
         self.shade = "shaded"
         self._pd_cache = {}
@@ -389,8 +395,10 @@ class View3D(QtWidgets.QWidget):
         elif g.kind == "mesh":
             pd = geom_polydata(g)
             if pd.n_cells:
+                smooth = bool(g.data.get("no_edges"))
                 try:
-                    n = pd.compute_normals(split_vertices=True, feature_angle=35, auto_orient_normals=False,
+                    n = pd.compute_normals(split_vertices=not smooth, feature_angle=35 if not smooth else 180,
+                                           auto_orient_normals=False,
                                            consistent_normals=False, cell_normals=False).triangulate()
                 except Exception:
                     n = pd.triangulate()
@@ -399,8 +407,9 @@ class View3D(QtWidgets.QWidget):
                 out["pts"] = np.asarray(n.points, np.float32)
                 out["nrm"] = np.asarray(n.point_data["Normals"], np.float32)
                 out["tris"] = tris
-                fe = pd.extract_feature_edges(35, boundary_edges=True, non_manifold_edges=False, manifold_edges=False)
-                if fe.n_cells:
+                fe = None if smooth else pd.extract_feature_edges(35, boundary_edges=True, non_manifold_edges=False,
+                                                                   manifold_edges=False)
+                if fe is not None and fe.n_cells:
                     L = fe.lines.reshape(-1, 3)[:, 1:]
                     out["segs"] = np.asarray(fe.points, np.float32)[L].reshape(-1, 3)
         elif g.kind == "point":
@@ -521,10 +530,30 @@ class View3D(QtWidgets.QWidget):
         self.batches = self._build_batches(self._items(), pickable=not self.preview_only)
         self.batch_by_actor = {a: m for a, m in self.batches}
         self.recolor(render=False)
+        self._update_ssao()
         if getattr(self, "gumball", None) is not None:
             self._build_grips()
             self.gumball.refresh()
         self.plotter.render()
+
+    def _update_ssao(self):
+        """Soft ambient-occlusion shading, scaled to the size of the scene."""
+        on = bool(getattr(self.settings, "ambient_occlusion", False)) and not self.preview_only
+        try:
+            if not on:
+                self.ren.UseSSAOOff()
+                return
+            b = np.array(self.ren.ComputeVisiblePropBounds(), float)
+            if not np.isfinite(b).all() or b[0] > b[1]:
+                return
+            diag = float(np.linalg.norm(b[1::2] - b[0::2])) or 1.0
+            self.ren.SetSSAORadius(diag * 0.006)
+            self.ren.SetSSAOBias(diag * 0.0006)
+            self.ren.SetSSAOKernelSize(128)
+            self.ren.SSAOBlurOn()
+            self.ren.UseSSAOOn()
+        except Exception:
+            pass
 
     def recolor(self, render=True):
         sel = self.doc.selection
@@ -577,8 +606,10 @@ class View3D(QtWidgets.QWidget):
         geoms = plain
         saved = self._owner_list
         self._owner_list = []
-        items = [(None, g, color or self.settings.color("preview"), False) for g in geoms]
-        self.extra_batches = self._build_batches(items, pickable=False, uniform=color or self.settings.color("preview"),
+        prev = color or self.settings.color("preview")
+        items = [(None, g, ROLE_COLORS.get(g.data.get("role"), prev), False) for g in geoms]
+        has_roles = any(g.data.get("role") in ROLE_COLORS for g in geoms)
+        self.extra_batches = self._build_batches(items, pickable=False, uniform=None if has_roles else prev,
                                                  opacity_scale=1.0)
         self._owner_list = saved
         self.extra_actors = [a for a, _ in self.extra_batches]

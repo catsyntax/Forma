@@ -280,6 +280,8 @@ class Geom:
             d["cps"] = xform_pts(M, d["cps"])
         elif k == "mesh":
             d["V"] = xform_pts(M, d["V"])
+            if d.get("axes") is not None:
+                d["axes"] = xform_pts(M, np.asarray(d["axes"], float).reshape(-1, 3)).reshape(-1, 2, 3)
             if np.linalg.det(M[:3, :3]) < 0:  # mirrored: flip winding
                 d["F"] = flip_faces(d["F"])
         elif k == "ellipse":
@@ -973,6 +975,9 @@ def explode(g: Geom):
 
 def feature_edges(m: Geom, angle_deg=30.0):
     """Boundary edges and sharp edges of a mesh (for wireframe/Make2D). Breps use their true edges."""
+    if m.kind == "mesh" and m.data.get("axes") is not None:
+        A = np.asarray(m.data["axes"], float).reshape(-1, 2, 3)   # members drawn as centre lines
+        return [(a, b) for a, b in A]
     if m.kind == "brep":
         segs = []
         for pl in _brep().tessellate(m)[3]:

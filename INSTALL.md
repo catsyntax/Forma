@@ -1,5 +1,8 @@
 # Installing Forma
 
+**Easiest:** download the ready-made app for your computer from **[Download App](Download%20App/README.md)**.
+No Python, no setup. The rest of this page is for running Forma from its source code instead.
+
 Forma runs on **macOS**, **Windows** and **Linux**. You don't need to install Python or anything else first:
 the start file sets everything up the first time (about 5–10 minutes and a 1 GB download), then Forma opens in
 a few seconds every time after that. Everything goes into a `.venv` folder inside the Forma folder, so deleting

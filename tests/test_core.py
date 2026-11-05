@@ -93,3 +93,26 @@ def test_file_round_trip(ext):
         assert os.path.getsize(path) > 0
         objs = X.import_file(path)
         assert objs
+
+
+def test_section_plane_cuts_box():
+    from forma import section as S
+    d = Document()
+    d.add(B.box((0, 0, 0), 1000, 1000, 1000))
+    sec = S.make_plane((-500, 500, 0), (1500, 500, 0), -100, 1100)
+    d.add(sec)
+    for side in (1, -1):
+        r = S.compute(d, sec, side)
+        assert r["cut"], "the plane through the box must produce cut lines"
+        loop = max(r["fill"], key=len)
+        w = np.ptp(loop[:, 0])
+        h = np.ptp(loop[:, 1])
+        assert w == pytest.approx(1000, rel=1e-3) and h == pytest.approx(1000, rel=1e-3)
+
+
+def test_parametric_buildings():
+    from forma import parametric as PA
+    for fn in (PA.stadium, PA.diagrid_tower, PA.pavilion):
+        parts = fn()
+        assert len(parts) >= 3
+        assert any(g.kind == "brep" for _, g in parts)
