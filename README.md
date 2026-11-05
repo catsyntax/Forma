@@ -54,11 +54,11 @@ and FBX, 3DS, OBJ, DAE (SketchUp), DXF/DWG, SVG, glTF, STL and more (see the tab
 
 ```bash
 # with pip (Python 3.10 - 3.13)
-pip install git+https://github.com/<your-user>/forma.git
+pip install git+https://github.com/catsyntax/Forma.git
 forma                                   # or: python -m forma examples/sample_project.forma
 
 # from a clone
-git clone https://github.com/<your-user>/forma.git && cd forma
+git clone https://github.com/catsyntax/Forma.git && cd Forma
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[test]"
 python -m forma

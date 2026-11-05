@@ -10,7 +10,7 @@ the folder removes Forma completely.
 1. On the GitHub page, click the green **Code** button, then **Download ZIP**.
 2. Unzip it. Put the `forma` folder somewhere you'll keep it, for example in Documents.
 
-(Or, if you use git: `git clone https://github.com/<your-user>/forma.git`)
+(Or, if you use git: `git clone https://github.com/catsyntax/Forma.git`)
 
 ## 2. Start Forma
 
