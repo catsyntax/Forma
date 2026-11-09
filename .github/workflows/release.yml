@@ -73,6 +73,15 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        id: v
+        run: echo "version=$(grep __version__ forma/__init__.py | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - name: Point the latest-build tag at this commit
+        if: github.ref_type != 'tag'
+        run: |
+          git tag -f latest-build "$GITHUB_SHA"
+          git push -f origin latest-build
       - uses: actions/download-artifact@v4
         with:
           path: assets
@@ -81,9 +90,17 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || 'latest-build' }}
-          name: Forma ${{ github.ref_type == 'tag' && github.ref_name || 'latest build' }}
+          name: Forma ${{ steps.v.outputs.version }}
           make_latest: true
           files: assets/*
           body: |
-            Ready-to-run Forma apps. Download the one for your computer, unzip / open it, and start Forma.
+            Forma ${{ steps.v.outputs.version }}, ready-to-run apps built from commit ${{ github.sha }}.
+            Download the one for your computer, unzip / open it, and start Forma:
+            - Mac with Apple chip (M1-M4): Forma-macOS-AppleSilicon.dmg
+            - Mac with Intel chip: Forma-macOS-Intel.dmg
+            - Windows 10/11: Forma-Windows.zip
+            - Linux: Forma-Linux.tar.gz
             See "Download App" in the repository for step-by-step instructions.
+
+            New in 0.7: import Grasshopper definitions (.gh / .ghx) into the Nodes workspace, plus native
+            Space Syntax 3D (voxel VGA) and Modular Plan Generator nodes.
