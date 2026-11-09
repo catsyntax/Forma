@@ -1,6 +1,8 @@
 """Node editor (the Nodes workspace): canvas, nodes, wires, search, preview and bake."""
 from __future__ import annotations
 
+import os
+
 import math
 import uuid
 
@@ -721,7 +723,18 @@ class NodeEditor(QtWidgets.QWidget):
             w.toggled.connect(lambda v, nid=item.nid: self._set_prop(nid, "value", v))
             return w
         if t.widget == "text":
-            w = QtWidgets.QLineEdit(str(props.get("value", "")))
+            txt = str(props.get("value", ""))
+            if "\n" in txt or props.get("multiline"):
+                w = QtWidgets.QPlainTextEdit(txt)
+                w.setFixedSize(300, 150)
+                w.setFont(QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont))
+                timer = QtCore.QTimer(w)
+                timer.setSingleShot(True)
+                timer.setInterval(700)
+                timer.timeout.connect(lambda nid=item.nid, w=w: self._set_prop(nid, "value", w.toPlainText()))
+                w.textChanged.connect(timer.start)
+                return w
+            w = QtWidgets.QLineEdit(txt)
             w.editingFinished.connect(lambda nid=item.nid, w=w: self._set_prop(nid, "value", w.text()))
             return w
         if t.widget == "expr":
@@ -1122,6 +1135,66 @@ class NodeEditor(QtWidgets.QWidget):
 
     def shutdown(self):
         self.compute.shutdown()
+
+    # ------------------------------------------------------------ Grasshopper
+    GH_UNITS = [("Metres", "m"), ("Millimetres", "mm"), ("Centimetres", "cm"), ("Feet", "ft"), ("Inches", "in")]
+
+    def import_grasshopper(self, path, doc_units="mm"):
+        from .. import ghimport
+        from .userlib import UNIT_TO_M
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle("Import Grasshopper definition")
+        lay = QtWidgets.QFormLayout(dlg)
+        lay.addRow(QtWidgets.QLabel(f"<b>{os.path.basename(path)}</b>"))
+        units = QtWidgets.QComboBox()
+        for label, u in self.GH_UNITS:
+            units.addItem(label, u)
+        units.setToolTip("Units of the Rhino file this definition was made in. Length sliders that feed Forma's "
+                         "built-in tools are converted to this model's units.")
+        lay.addRow("Lengths in the Grasshopper file", units)
+        mode = QtWidgets.QComboBox()
+        mode.addItems(["Add beside the current graph", "Replace the current graph"])
+        if self.graph["nodes"]:
+            lay.addRow("Graph", mode)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addRow(bb)
+        if not dlg.exec():
+            return
+        scale = UNIT_TO_M.get(units.currentData(), 1.0) / UNIT_TO_M.get(doc_units, 0.001)
+        try:
+            g, report = ghimport.convert(path, scale)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Grasshopper import failed", str(e))
+            return
+        if mode.currentIndex() == 1 and self.graph["nodes"]:
+            self.delete_nodes(list(self.graph["nodes"]))
+        dx = dy = 0.0
+        if self.graph["nodes"] and g["nodes"]:
+            xs = [n["pos"][0] for n in self.graph["nodes"].values()]
+            ys = [n["pos"][1] for n in self.graph["nodes"].values()]
+            gx = [n["pos"][0] for n in g["nodes"].values()]
+            gy = [n["pos"][1] for n in g["nodes"].values()]
+            dx, dy = max(xs) + 400 - min(gx), min(ys) - min(gy)
+        for nid, n in g["nodes"].items():
+            props = n["props"]
+            new = self.add_node(n["type"], QtCore.QPointF(n["pos"][0] + dx, n["pos"][1] + dy), props=props,
+                                values=n.get("values"), nid=nid, solve=False)
+            self.graph["nodes"][new]["preview"] = n.get("preview", True)
+            if n.get("label"):
+                self.graph["nodes"][new]["label"] = n["label"]
+            self.items[new].build()
+            self.items[new].update()
+        for s, o, d, i in g["wires"]:
+            self.connect(s, o, d, i)
+        self.mark_dirty(list(g["nodes"]))
+        QtCore.QTimer.singleShot(60, self.frame_all)
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Grasshopper import")
+        box.setText(report[0])
+        box.setInformativeText("\n\n".join(report[1:]) or "Everything came across.")
+        box.exec()
 
     # ------------------------------------------------------------ demo
     EXAMPLES = ["Parametric stadium", "Twisting diagrid tower", "Free-form pavilion", "Tower: solar radiation",

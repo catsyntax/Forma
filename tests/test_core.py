@@ -116,3 +116,73 @@ def test_parametric_buildings():
         parts = fn()
         assert len(parts) >= 3
         assert any(g.kind == "brep" for _, g in parts)
+
+
+def test_modular_plan_generator():
+    from forma.nodes.registry import NODE_TYPES
+    t = NODE_TYPES["Modular Plan Generator"]
+    kw = {p.name: p.default for p in t.inputs}
+    kw["Links"] = "L1-B1, L1-C1, C1-B2"
+    r = t.fn(**kw)
+    assert len(r["Rooms"]) == 5 and all(len(p) == 7 for p in r["Rooms"])
+    assert "unmet links" in r["Report"]
+
+
+def test_space_syntax_voxel_vga():
+    from forma import geometry as G
+    from forma.nodes.registry import NODE_TYPES
+    t = NODE_TYPES["Space Syntax 3D (voxel VGA)"]
+    kw = {p.name: p.default for p in t.inputs}
+    kw.update(Space=[G.box((0, 0, 0), 4000, 3000, 2700)], Furniture=[G.box((800, 800, 0), 1500, 800, 800)])
+    kw["Voxel Size"] = 300.0
+    kw["Eye Band"] = 5
+    r = t.fn(**kw)
+    assert r["Count"] > 100 and len(r["Walk Values"]) == len(r["Vis Values"]) > 10
+    assert r["Walk Heatmap"].kind == "mesh"
+
+
+def test_grasshopper_import(tmp_path):
+    import base64
+    from forma import ghimport
+    code = base64.b64encode(b"a = x * 2").decode()
+    ghx = f"""<?xml version="1.0" encoding="utf-8"?>
+<Archive name="Root"><items count="0"/><chunks count="1">
+ <chunk name="Definition"><items count="0"/><chunks count="1">
+  <chunk name="DefinitionObjects"><items count="1"><item name="ObjectCount" type_name="gh_int32">2</item></items>
+   <chunks count="2">
+    <chunk name="Object" index="0"><items count="2">
+      <item name="GUID" type_name="gh_guid">57da07bd-ecab-415d-9d86-af36d7073abc</item>
+      <item name="Name" type_name="gh_string">Number Slider</item></items>
+     <chunks count="1"><chunk name="Container"><items count="2">
+       <item name="InstanceGuid" type_name="gh_guid">11111111-1111-1111-1111-111111111111</item>
+       <item name="NickName" type_name="gh_string">count</item></items>
+      <chunks count="1"><chunk name="Slider"><items count="4">
+       <item name="Value" type_name="gh_double">4</item><item name="Min" type_name="gh_double">0</item>
+       <item name="Max" type_name="gh_double">10</item><item name="Digits" type_name="gh_int32">0</item>
+      </items></chunk></chunks></chunk></chunks></chunk>
+    <chunk name="Object" index="1"><items count="2">
+      <item name="GUID" type_name="gh_guid">c9b2d725-6f87-4b07-af90-bd9aefef68eb</item>
+      <item name="Name" type_name="gh_string">Script</item></items>
+     <chunks count="1"><chunk name="Container"><items count="1">
+       <item name="NickName" type_name="gh_string">double it</item></items>
+      <chunks count="2">
+       <chunk name="ParameterData"><items count="0"/><chunks count="2">
+        <chunk name="InputParam" index="0"><items count="3">
+          <item name="NickName" type_name="gh_string">x</item>
+          <item name="InstanceGuid" type_name="gh_guid">22222222-2222-2222-2222-222222222222</item>
+          <item name="Source" index="0" type_name="gh_guid">11111111-1111-1111-1111-111111111111</item></items></chunk>
+        <chunk name="OutputParam" index="0"><items count="2">
+          <item name="NickName" type_name="gh_string">a</item>
+          <item name="InstanceGuid" type_name="gh_guid">33333333-3333-3333-3333-333333333333</item></items></chunk>
+       </chunks></chunk>
+       <chunk name="Script"><items count="1"><item name="Text" type_name="gh_string">{code}</item></items></chunk>
+      </chunks></chunk></chunks></chunk>
+   </chunks></chunk></chunks></chunk></chunks></Archive>"""
+    p = tmp_path / "t.ghx"
+    p.write_text(ghx)
+    g, report = ghimport.convert(str(p))
+    types = sorted(n["type"] for n in g["nodes"].values())
+    assert types == ["Number Slider", "Python"]
+    py = next(n for n in g["nodes"].values() if n["type"] == "Python")
+    assert py["props"]["code"] == "a = x * 2" and py["props"]["inputs"] == ["x"] and py["props"]["outputs"] == ["a"]
+    assert len(g["wires"]) == 1 and g["wires"][0][3] == "x"

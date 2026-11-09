@@ -196,6 +196,33 @@ so large modular models stay light.
 - **Stadium**, **Diagrid Tower** and **Free-form Pavilion** nodes generate complete parametric buildings
   (NURBS surfaces plus structural members) from a few sliders. Bake them to keep them as model objects.
 
+### Import Grasshopper definitions (.gh, .ghx)
+*Nodes → Import Grasshopper…* (or File → Import Grasshopper definition, or just File → Import a `.gh`)
+rebuilds a Grasshopper definition as a Forma node graph:
+- **Number Slider, Boolean Toggle, Button, Panel, Value List** → the same parameters with their values.
+- **Python script components** (Rhino 8 *Script* / *Python 3 Script*, and GhPython) → Forma **Python**
+  nodes with the same code, inputs and outputs. Plain Python runs as is. Code that imports Rhino-only
+  modules (`Rhino`, `rhinoscriptsyntax`, `scriptcontext`, `Eto`, …) comes across but is flagged in the
+  import report, because those modules only exist inside Rhino.
+- Scripts Forma has a **native port** of become that node instead and run without Rhino:
+  **Space Syntax 3D (voxel VGA)** (from *Space Syntax Master v03*) and **Modular Plan Generator**.
+- **Geometry parameters** (Brep, Curve, Mesh…) → *Geometry* nodes. Grasshopper keeps referenced
+  geometry in the Rhino file, not the `.gh`, so import the `.3dm`, select the objects and click
+  *Set from selection*.
+- Common components with a Forma equivalent (Solid Union, Move, Box, Loft, List Item, …) are mapped;
+  anything else becomes a labelled placeholder, listed in the import report. Wires are rebuilt.
+- Choose the Rhino file's units on import; length sliders feeding the native tools are converted.
+
+### Space planning and 3D space syntax
+- **Modular Plan Generator** packs a brief of modular rooms (one per line: `code type modules [attached-to]`,
+  e.g. `B1_BA bathroom 1 B1`) into several plan options, keeping linked rooms touching. Rooms grow along
+  the module's short side, corridors along the long side. *Links* sets adjacencies (`L1-B1, L1-C1`).
+  Outputs coloured rooms per option, a report (footprint, efficiency, unmet links) and a check against
+  indicative Australian room minimums.
+- **Space Syntax 3D (voxel VGA)** voxelises a closed AIR volume (minus furniture) and computes 15 VGA
+  measures on the walkable floor band and at eye level, with sightlines blocked by walls and furniture at
+  any height. Results are cached, so switching *Metric* is instant.
+
 ### Analysis libraries
 - **Climate:** Location (20 city presets), Sun Vector, Sun Path, Shadow Study (shadows on the ground at any hour).
 - **Daylight:** Daylight Factor (CIE overcast sky component; model windows as openings), Sky View Factor,

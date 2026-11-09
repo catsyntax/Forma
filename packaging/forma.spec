@@ -16,7 +16,7 @@ for pkg in ("OCP", "cadquery_ocp", "rhino3dm", "pyvista", "pyvistaqt", "trimesh"
         hidden += h
     except Exception:
         pass
-hidden += collect_submodules("vtkmodules") + collect_submodules("forma") + ["qtpy", "scipy.spatial", "lxml.etree"]
+hidden += collect_submodules("vtkmodules") + collect_submodules("forma") + ["qtpy", "scipy.spatial", "scipy.sparse.csgraph", "scipy.ndimage", "scipy.special", "lxml.etree"]
 datas += collect_data_files("vtkmodules")
 datas += [(os.path.join(ROOT, "forma", "resources"), "forma/resources"),
           (os.path.join(ROOT, "examples"), "examples")]
@@ -37,7 +37,7 @@ if sys.platform == "darwin":
                  info_plist={"CFBundleName": "Forma", "CFBundleDisplayName": "Forma",
                              "NSHumanReadableCopyright": "Created by catsyntax",
                              "NSHighResolutionCapable": True,
-                             "CFBundleShortVersionString": "0.6.0",
+                             "CFBundleShortVersionString": "0.7.0",
                              "CFBundleDocumentTypes": [{"CFBundleTypeName": "Forma project",
                                                         "CFBundleTypeExtensions": ["forma"],
                                                         "CFBundleTypeRole": "Editor"}]})

@@ -40,6 +40,8 @@ FORMATS = [
     ("ply", "PLY", True, True),
     ("off", "OFF", True, True),
     ("3mf", "3MF (3D printing)", True, True),
+    ("gh", "Grasshopper definition (opens in Nodes)", True, False),
+    ("ghx", "Grasshopper definition (opens in Nodes)", True, False),
 ]
 
 

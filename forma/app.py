@@ -337,6 +337,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tool_stack.addWidget(self._toolbar(COMPONENT_TOOLS, "3d"))
         ntb = self._toolbar(NODE_TOOLS, "3d")
         ntb.addSeparator()
+        ntb.addAction("Import Grasshopper...").triggered.connect(lambda: self.import_grasshopper())
         ntb.addAction("Example: tower").triggered.connect(lambda: self.nodes.load_demo())
         ex = QtWidgets.QComboBox()
         ex.addItem("Analysis examples...")
@@ -632,6 +633,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._act(m, "Save As...", self.file_save_as, "Ctrl+Shift+S")
         m.addSeparator()
         self._act(m, "Import...", self.file_import, "Ctrl+I")
+        self._act(m, "Import Grasshopper definition (.gh, .ghx)...", lambda: self.import_grasshopper())
         self._act(m, "Export...", self.file_export, "Ctrl+E")
         self._act(m, "Export selected...", lambda: self.file_export(selected=True), "Ctrl+Shift+E")
         self._act(m, "Export 2D drawing (PDF, DWG, DXF, PNG, SVG)...", self.export_drawing, "Ctrl+Alt+E")
@@ -843,8 +845,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.doc.path = path
         return self.file_save()
 
+    def import_grasshopper(self, path=None):
+        """Bring a Grasshopper definition into the Nodes workspace."""
+        if not path:
+            path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Import Grasshopper definition", "",
+                                                            "Grasshopper (*.gh *.ghx)")
+        if not path:
+            return
+        self.set_persona(PERSONAS.index("Nodes"))
+        self.nodes.import_grasshopper(path, self.doc.units)
+
     def _import(self, path):
         from .exchange import import_file
+        if path.lower().endswith((".gh", ".ghx")):
+            return self.import_grasshopper(path)
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
             layers, geoms, warnings = import_file(path, self.doc.units)

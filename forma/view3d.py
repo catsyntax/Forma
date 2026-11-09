@@ -42,7 +42,10 @@ def geom_polydata(g):
 # Material colours for parametric-architecture previews (node results), so they read like a model.
 ROLE_COLORS = {"pitch": "#3f8f4e", "seating": "#8a2f3a", "roof": "#f2f2f0", "facade": "#c9ced6", "ribs": "#ffffff",
                "trusses": "#e8e8e8", "glass": "#6f9fbf", "slabs": "#d8d8d8", "core": "#b8b2a8", "diagrid": "#f4f4f4",
-               "crown": "#e0e6ea", "shell": "#f5f5f2", "columns": "#eeeeea", "ground": "#bfc3c7"}
+               "crown": "#e0e6ea", "shell": "#f5f5f2", "columns": "#eeeeea", "ground": "#bfc3c7",
+               # modular plan generator room types
+               "living": "#c48422", "bedroom": "#2e74b5", "kitchen": "#28946a", "storage": "#7a708c",
+               "corridor": "#bc5252", "bathroom": "#3898a8", "envelope": "#5a5a5a"}
 
 
 class ViewCube:
