@@ -54,6 +54,8 @@ the folder removes Forma completely.
    **F1** lists every command and shortcut.
 4. In **Nodes**, pick an item from **Analysis examples** in the toolbar to see daylight, shadows,
    solar gains, energy and space syntax in action.
+5. Have Grasshopper definitions? In **Nodes**, click **Import Grasshopper…** and pick a `.gh` or `.ghx`
+   file. Sliders, toggles, panels, Python scripts and common components come across as Forma nodes.
 
 ## Updating
 
