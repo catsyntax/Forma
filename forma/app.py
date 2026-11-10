@@ -232,6 +232,16 @@ class MainWindow(QtWidgets.QMainWindow):
             a = vbar.addAction("Zoom all")
             a.triggered.connect(lambda: self.view_action("zoom_extents"))
             vbar.addSeparator()
+            self.back2d_combo = QtWidgets.QComboBox()
+            self.back2d_combo.addItems(["Back lines: show", "Back lines: dashed", "Back lines: hidden"])
+            self.back2d_combo.setToolTip("Lines behind surfaces (from this view): drawn normally, dashed, or left out. "
+                                         "Exported drawings follow this setting.")
+            modes = ["solid", "dashed", "hidden"]
+            self.back2d_combo.setCurrentIndex(modes.index(getattr(self.settings, "back_lines_2d", "solid"))
+                                              if getattr(self.settings, "back_lines_2d", "solid") in modes else 0)
+            self.back2d_combo.currentIndexChanged.connect(lambda i: self.view2d.set_back_mode(modes[i]))
+            vbar.addWidget(self.back2d_combo)
+            vbar.addSeparator()
             a = vbar.addAction("Export drawing...")
             a.setToolTip("Export this view and any section views to PDF, DWG, DXF, PNG or SVG (Ctrl+Alt+E)")
             a.triggered.connect(self.export_drawing)
@@ -325,6 +335,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.shade_combo.addItems(["Shaded", "Wireframe", "Ghosted"])
         self.shade_combo.currentIndexChanged.connect(lambda i: self.view3d.set_shade(["shaded", "wire", "ghost"][i]))
         tb.addWidget(self.shade_combo)
+        self.back3d_combo = QtWidgets.QComboBox()
+        self.back3d_combo.addItems(["Back lines: show", "Back lines: dashed", "Back lines: hidden"])
+        self.back3d_combo.setToolTip("Lines behind surfaces: in Wireframe they show through (show), dashed, or "
+                                     "hidden like a technical drawing; in Shaded, dashed draws them over the surfaces.")
+        modes = ["solid", "dashed", "hidden"]
+        cur = getattr(self.settings, "back_lines_3d", "solid")
+        self.back3d_combo.setCurrentIndex(modes.index(cur) if cur in modes else 0)
+        self.back3d_combo.currentIndexChanged.connect(lambda i: self.view3d.set_back_mode(modes[i]))
+        tb.addWidget(self.back3d_combo)
         return tb
 
     def _scene_page(self):

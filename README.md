@@ -237,6 +237,13 @@ rebuilds a Grasshopper definition as a Forma node graph:
   measures on the walkable floor band and at eye level, with sightlines blocked by walls and furniture at
   any height. Results are cached, so switching *Metric* is instant.
 
+### Wireframes, outlines and back lines
+- Curved solids (cylinders, cones, spheres, tori, lofts, NURBS) show **isocurves** in the wireframe, like Rhino,
+  and their **outlines (silhouettes)** follow the view in the Model view and in every Draft view.
+- **Back lines: show / dashed / hidden** in the Draft and Model view bars. *Dashed* draws the lines behind
+  surfaces dashed; *hidden* leaves them out, for a technical hidden-line look (also in Wireframe).
+  Exported drawings (PDF, SVG, PNG, DXF/DWG with a DASHED linetype) follow the Draft setting.
+
 ### Layers and object display
 - **Sublayers** (`Parent::Child`, like Rhino) in a tree, with each layer's objects listed under it. Drag objects
   onto a layer to move them; drag a layer onto another to nest it. Double-click makes a layer current.

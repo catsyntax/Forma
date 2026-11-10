@@ -29,6 +29,8 @@ class Settings:
     theme: str = "Dark"
     colors: dict = field(default_factory=dict)  # per-key overrides on top of the preset
     gradient_3d: bool = True
+    back_lines_2d: str = "solid"     # Draft view: solid | dashed | hidden lines behind surfaces
+    back_lines_3d: str = "solid"     # Model view: same
     ambient_occlusion: bool = False  # soft contact shadows in the 3D view (SSAO); can be slow on older GPUs
     font_size: int = 12
     grid_spacing: float = 100.0

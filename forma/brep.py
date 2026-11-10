@@ -559,7 +559,7 @@ def transform(g: Geom, M: np.ndarray, keep_id=True) -> Geom:
     similar = np.allclose(RRt, np.eye(3) * s2, atol=1e-9 * max(1.0, s2))
     det = np.linalg.det(R)
     out = g.copy(keep_id=keep_id)
-    for k in ("brep", "_tess", "_props", "_grid", "_poly"):
+    for k in ("brep", "_tess", "_props", "_grid", "_poly", "_iso", "_hl_adj", "_trimesh"):
         out.data.pop(k, None)
     if similar:
         t = gp_Trsf()
@@ -767,6 +767,84 @@ def tessellate(g: Geom):
     g.data.pop("_remeshed", None)
     g.data["_tess"] = t
     return t
+
+
+def isocurves(g: Geom, density=1):
+    """Isocurve polylines on the curved faces (like Rhino's wireframe): 4 lines around full periodic
+    directions (the seam included), quarter lines across other directions; planes get none.
+    Each isocurve is clipped to the face's trims. Cached on the geom."""
+    key = ("_iso", density)
+    hit = g.data.get("_iso")
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    from OCP.BRepClass import BRepClass_FaceClassifier
+    from OCP.GeomAbs import GeomAbs_Cylinder, GeomAbs_Cone, GeomAbs_Sphere, GeomAbs_Torus
+    from OCP.TopAbs import TopAbs_IN, TopAbs_ON
+    from OCP.gp import gp_Pnt2d
+    out = []
+    try:
+        sh = shape_of(g)
+    except Exception:
+        return []
+    for f in faces(sh):
+        try:
+            S = BRepAdaptor_Surface(f)
+            typ = S.GetType()
+            if typ == GeomAbs_Plane:
+                continue
+            u0, u1, v0, v1 = BRepTools.UVBounds_s(f)
+            if not (u1 > u0 and v1 > v0):
+                continue
+            fc = BRepClass_FaceClassifier()
+            tol_u, tol_v = (u1 - u0) * 1e-6, (v1 - v0) * 1e-6
+
+            def levels(a, b, periodic, period, n_open):
+                if periodic and period and (b - a) >= period * 0.999:
+                    k = 4 * density
+                    return [a + period * i / k for i in range(k)]
+                if periodic and period:
+                    step = period / (4 * density)
+                    first = math.ceil((a + 1e-9) / step) * step
+                    return [x for x in np.arange(first, b - 1e-9, step)]
+                return [a + (b - a) * i / (n_open + 1) for i in range(1, n_open + 1)]
+
+            up = S.IsUPeriodic()
+            vp = S.IsVPeriodic()
+            per_u = S.UPeriod() if up else 0
+            per_v = S.VPeriod() if vp else 0
+            straight_v = typ in (GeomAbs_Cylinder, GeomAbs_Cone)
+            ulev = levels(u0, u1, up, per_u, 3 * density)
+            if straight_v:
+                vlev = []
+            elif typ == GeomAbs_Sphere:
+                vlev = [x for x in (-math.pi / 4, 0.0, math.pi / 4) if v0 + 1e-9 < x < v1 - 1e-9]
+            else:
+                vlev = levels(v0, v1, vp, per_v, 3 * density)
+            nsamp_v = 12 if straight_v else 48
+
+            def run(fixed_u, val, ts):
+                cur = []
+                for t in ts:
+                    uu, vv = (val, t) if fixed_u else (t, val)
+                    fc.Perform(f, gp_Pnt2d(min(max(uu, u0 + tol_u), u1 - tol_u), min(max(vv, v0 + tol_v), v1 - tol_v)), 1e-7)
+                    st = fc.State()
+                    if st in (TopAbs_IN, TopAbs_ON):
+                        p = S.Value(uu, vv)
+                        cur.append((p.X(), p.Y(), p.Z()))
+                    else:
+                        if len(cur) > 1:
+                            out.append(np.array(cur))
+                        cur = []
+                if len(cur) > 1:
+                    out.append(np.array(cur))
+            for u in ulev:
+                run(True, u, np.linspace(v0, v1, nsamp_v))
+            for v in vlev:
+                run(False, v, np.linspace(u0, u1, 64))
+        except Exception:
+            continue
+    g.data["_iso"] = (key, out)
+    return out
 
 
 def _vertex_normals(V, T):

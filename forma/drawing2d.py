@@ -21,10 +21,12 @@ SCALES = ["Fit to page", "1:20", "1:50", "1:100", "1:200", "1:500", "1:1000", "1
 
 # ---------------------------------------------------------------- collecting linework
 def sheet_from_draft(view2d):
-    """Everything the Draft view shows, in its current orientation (Top, Front, ...)."""
-    from . import geometry as G
+    """Everything the Draft view shows, in its current orientation (Top, Front, ...): edges, isocurves and
+    outlines of solids; with 'Back lines: dashed / hidden' the lines behind surfaces are dashed or left out."""
     doc = view2d.doc
     items = []
+    runs = view2d.hidden_runs() if hasattr(view2d, "hidden_runs") else None
+    mode = getattr(view2d, "back_mode", "solid")
     for owner, g, col, dim in doc.display("2d"):
         if g.data.get("section"):
             continue
@@ -35,16 +37,25 @@ def sheet_from_draft(view2d):
             wmm = doc.weight_of(owner)
             if vg.kind == "point":
                 continue
-            if vg.kind in ("mesh", "brep"):
-                segs = G.feature_edges(vg)
-                if segs:
-                    S = np.array([[a[:2], b[:2]] for a, b in segs], float)
-                    items.append({"type": "lines", "segs": S, "layer": layer, "color": color, "width": wmm or 0.25})
-            else:
-                s = np.asarray(vg.sample(), float)[:, :2]
-                if len(s) > 1:
-                    items.append({"type": "poly", "pts": s, "closed": bool(getattr(vg, "closed", False)),
-                                  "layer": layer, "color": color, "width": wmm or 0.35})
+            solid = vg.kind in ("mesh", "brep")
+            default_w = 0.25 if solid else 0.35
+            rr = runs.get((owner, id(g))) if runs is not None else None
+            if rr is not None:
+                for pts, visible in rr:
+                    if not visible and mode == "hidden":
+                        continue
+                    P = np.asarray(pts, float)[:, :2]
+                    if len(P) > 1:
+                        items.append({"type": "poly", "pts": P, "closed": False, "color": color,
+                                      "layer": layer if visible else layer + "-Hidden",
+                                      "width": (wmm or default_w) * (1.0 if visible else 0.6), "dash": not visible})
+                continue
+            pls = view2d.lines_for(vg) if solid else [np.asarray(vg.sample(), float)]
+            for pl in pls:
+                P = np.asarray(pl, float)[:, :2]
+                if len(P) > 1:
+                    items.append({"type": "poly", "pts": P, "closed": bool(getattr(vg, "closed", False)) and not solid,
+                                  "layer": layer, "color": color, "width": wmm or default_w})
         except Exception:
             continue
     return {"title": f"Draft - {view2d.view_name} view", "items": items}
@@ -123,6 +134,9 @@ def _paint(qp, sheet, rect, mm_to_dev, model_to_paper, shaded=True, title=None):
             qp.drawPath(path)
         elif it["type"] in ("lines", "poly"):
             pen = QtGui.QPen(col, w)
+            if it.get("dash"):
+                pen.setStyle(QtCore.Qt.CustomDashLine)
+                pen.setDashPattern([6, 4])
             pen.setCapStyle(QtCore.Qt.RoundCap)
             pen.setJoinStyle(QtCore.Qt.RoundJoin)
             qp.setPen(pen)
@@ -266,6 +280,9 @@ def export_dxf(sheets, path, units="mm"):
                 doc.layers.add(lay, true_color=colors.rgb2int((rgb.red(), rgb.green(), rgb.blue())),
                                lineweight=int(round(max(it["width"], 0.13) * 100)))
             attrs = {"layer": lay, "lineweight": _dxf_weight(it["width"])}
+            if it.get("dash"):
+                attrs["linetype"] = "DASHED"
+                attrs["ltscale"] = max(float(np.ptp(np.asarray(hi - lo))) / 400.0, 1e-6)
             rgb = QtGui.QColor(it["color"])
             attrs["true_color"] = colors.rgb2int((rgb.red(), rgb.green(), rgb.blue()))
             if it["type"] == "lines":

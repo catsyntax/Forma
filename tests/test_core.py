@@ -234,3 +234,16 @@ def test_layers_tree_and_object_attributes():
     assert d.rename_layer("A", "Z") and d.objects[g.id].layer == "Z::B::C"
     assert d.move_layer("Z::B", None) and d.objects[g.id].layer == "B::C"
     assert d.delete_layer("B") and d.objects[g.id].layer == "Default"
+
+
+def test_isocurves_and_silhouettes():
+    """Curved solids get isocurves (wireframe) and view outlines (Draft / hidden lines)."""
+    from forma import brep as B, hiddenline as H
+    import numpy as np
+    cyl, sph, box = B.cylinder((0, 0, 0), 500, 1200), B.sphere((0, 0, 0), 500), B.box((0, 0, 0), 10, 10, 10)
+    assert len(B.isocurves(cyl)) == 4 and len(B.isocurves(sph)) >= 6 and B.isocurves(box) == []
+    side = H.silhouettes(cyl, direction=(0, 1, 0))      # looking from the front: two vertical outline lines
+    assert len(side) >= 2 and np.allclose(np.abs(side[:, :, 0]).max(), 500, atol=5)
+    assert len(H.silhouettes(sph, direction=(0, 0, -1))) > 20
+    moved = cyl.transformed(np.diag([1.0, 1, 1, 1]) + np.eye(4) * 0)   # caches must not leak into copies
+    assert "_iso" not in moved.data and "_hl_adj" not in moved.data

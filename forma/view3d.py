@@ -179,6 +179,7 @@ class View3D(QtWidgets.QWidget):
         self.ren.SetNearClippingPlaneTolerance(0.001)
         self.ren.AddObserver("StartEvent", lambda *_: self.ren.ResetCameraClippingRange())
         self.shade = "shaded"
+        self.back_mode = getattr(settings, "back_lines_3d", "solid")
         self._pd_cache = {}
         self.preview_actors = []
         self.grid_actors = []
@@ -393,7 +394,12 @@ class View3D(QtWidgets.QWidget):
             out["pts"] = np.asarray(V, np.float32)
             out["nrm"] = np.asarray(N, np.float32)
             out["tris"] = np.asarray(T, int)
-            segs = [np.repeat(e, 2, axis=0)[1:-1] for e in edges if len(e) >= 2]
+            try:
+                iso = B.isocurves(g)
+            except Exception:
+                iso = []
+            out["curved"] = bool(iso)
+            segs = [np.repeat(e, 2, axis=0)[1:-1] for e in list(edges) + list(iso) if len(e) >= 2]
             if segs:
                 out["segs"] = np.vstack(segs).astype(np.float32)
         elif g.kind == "mesh":
@@ -411,6 +417,7 @@ class View3D(QtWidgets.QWidget):
                 out["pts"] = np.asarray(n.points, np.float32)
                 out["nrm"] = np.asarray(n.point_data["Normals"], np.float32)
                 out["tris"] = tris
+                out["curved"] = not smooth
                 fe = None if smooth else pd.extract_feature_edges(35, boundary_edges=True, non_manifold_edges=False,
                                                                    manifold_edges=False)
                 if fe is not None and fe.n_cells:
@@ -450,13 +457,21 @@ class View3D(QtWidgets.QWidget):
             ln_p, ln_cells, ln_c, ln_o, ln_co = [], [], [], [], []
             pt_p, pt_c, pt_o = [], [], []
             ns = ne = nl = 0
+            occlude = self.shade == "wire" and getattr(self, "back_mode", "solid") != "solid"
+            bg_rgb = self._rgb(c.get("view3d_bottom", "#2a2c30"))
+            sil_p, sil_t, ns_sil = [], [], 0
             for owner, prep, rgb in entries:
-                if "pts" in prep and self.shade != "wire":
+                if "pts" in prep and prep.get("curved") and len(prep["tris"]):
+                    sil_p.append(prep["pts"])
+                    sil_t.append(prep["tris"] + ns_sil)
+                    ns_sil += len(prep["pts"])
+                if "pts" in prep and (self.shade != "wire" or occlude):
+                    srgb = bg_rgb if occlude else rgb
                     k = len(prep["pts"])
                     surf_p.append(prep["pts"])
                     surf_n.append(prep["nrm"])
                     surf_t.append(prep["tris"] + ns)
-                    surf_c.append(np.broadcast_to(rgb, (k, 3)))
+                    surf_c.append(np.broadcast_to(srgb, (k, 3)))
                     surf_o.append(np.full(k, len(self._owner_list), np.int32))
                     surf_co.append(np.full(len(prep["tris"]), len(self._owner_list), np.int32))
                     ns += k
@@ -491,14 +506,28 @@ class View3D(QtWidgets.QWidget):
                 pd.point_data.active_normals_name = "Normals"
                 base = np.vstack(surf_c).copy()
                 pd.point_data["rgb"] = base.copy()
+                lit = dict(specular=0.2, specular_power=20, ambient=0.2, diffuse=0.85) if not occlude else \
+                    dict(specular=0.0, ambient=1.0, diffuse=0.0)
                 a = self.plotter.add_mesh(pd, scalars="rgb", rgb=True, reset_camera=False, render=False,
                                           opacity=(0.35 if self.shade == "ghost" else 1.0) * op,
-                                          specular=0.2, specular_power=20, ambient=0.2, diffuse=0.85,
-                                          pickable=pickable, show_scalar_bar=False)
+                                          pickable=pickable, show_scalar_bar=False, **lit)
+                try:   # push surfaces back a little so edges and isocurves lying on them always win
+                    mp = a.GetMapper()
+                    mp.SetResolveCoincidentTopologyToPolygonOffset()
+                    mp.SetRelativeCoincidentTopologyPolygonOffsetParameters(1.5, 2.0)
+                except Exception:
+                    pass
                 a.GetProperty().SetInterpolationToPhong()
                 if self.shade == "ghost" or op < 1:
                     a.GetProperty().SetBackfaceCulling(False)
                 out.append((a, {"pd": pd, "base": base, "pown": np.concatenate(surf_o), "cown": np.concatenate(surf_co)}))
+            if sil_p:
+                try:
+                    sil_rgb = edge_rgb if self.shade != "wire" else self._rgb("#2a2a2e" if light else "#b8bcc4")
+                    out.append(self._silhouette_actor(np.vstack(sil_p), np.vstack(sil_t), sil_rgb,
+                                                      display_px(wmm, 1.6 if self.shade == "wire" else 1.2), op))
+                except Exception as e:
+                    print("[forma] silhouettes:", e, flush=True)
             if seg_p:
                 P_ = np.vstack(seg_p)
                 n = len(P_) // 2
@@ -530,6 +559,214 @@ class View3D(QtWidgets.QWidget):
                 out.append((a, {"pd": pd, "base": base, "pown": own, "cown": own}))
         return out
 
+    def _silhouette_actor(self, P, T, rgb, width, opacity):
+        """Outline of curved surfaces, recomputed by VTK for every camera position."""
+        pd = pv.PolyData(np.asarray(P, float), faces=np.hstack([np.full((len(T), 1), 3), T]).ravel())
+        pd = pd.clean(tolerance=1e-7, absolute=False)
+        sil = vtk.vtkPolyDataSilhouette()
+        sil.SetInputData(pd)
+        sil.SetCamera(self.ren.GetActiveCamera())
+        sil.SetEnableFeatureAngle(0)
+        sil.BorderEdgesOff()
+        sil.SetDirectionToCameraOrigin()
+        m = vtk.vtkPolyDataMapper()
+        m.SetInputConnection(sil.GetOutputPort())
+        m.SetResolveCoincidentTopologyToPolygonOffset()
+        a = vtk.vtkActor()
+        a.SetMapper(m)
+        pr = a.GetProperty()
+        pr.SetColor(*(np.asarray(rgb, float) / (255.0 if np.max(rgb) > 1 else 1.0)))
+        pr.SetLineWidth(width)
+        pr.LightingOff()
+        pr.SetOpacity(opacity)
+        a.PickableOff()
+        self.ren.AddActor(a)
+        return (a, {"sil": True})
+
+    # ------------------------------------------------------------ back lines (hidden-line display)
+    def set_back_mode(self, mode):
+        self.back_mode = mode
+        try:
+            self.settings.back_lines_3d = mode
+            self.settings.save()
+        except Exception:
+            pass
+        self.rebuild()
+
+    def _hl_setup(self):
+        if getattr(self, "_hl_ren", None) is not None:
+            return
+        rw = self.plotter.ren_win
+        rw.SetNumberOfLayers(max(3, rw.GetNumberOfLayers()))
+        self._hl_ren = vtk.vtkRenderer()
+        self._hl_ren.SetLayer(2)
+        self._hl_ren.InteractiveOff()
+        self._hl_ren.SetActiveCamera(self.ren.GetActiveCamera())
+        rw.AddRenderer(self._hl_ren)
+        self._hl_actor = None
+        self._hl_timer = QtCore.QTimer(self)
+        self._hl_timer.setSingleShot(True)
+        self._hl_timer.setInterval(220)
+        self._hl_timer.timeout.connect(self._update_hidden)
+        self.ren.GetActiveCamera().AddObserver("ModifiedEvent", lambda *_: self._camera_moved())
+
+    def _cam_state(self):
+        c = self.ren.GetActiveCamera()
+        return (c.GetPosition(), c.GetFocalPoint(), c.GetViewUp(), c.GetParallelScale(), c.GetViewAngle(),
+                c.GetParallelProjection(), tuple(self.plotter.ren_win.GetSize()))
+
+    def _camera_moved(self):
+        if getattr(self, "_hl_busy", False) or getattr(self, "back_mode", "solid") != "dashed":
+            return
+        if self._cam_state() == getattr(self, "_hl_cam", None):
+            return    # only the clipping range changed (happens on every render)
+        if self._hl_actor is not None and self._hl_actor.GetVisibility():
+            self._hl_actor.VisibilityOff()
+        self._hl_timer.start()
+
+    def _schedule_hidden(self):
+        if self.preview_only:
+            return
+        self._hl_setup()
+        if getattr(self, "back_mode", "solid") != "dashed":
+            if self._hl_actor is not None:
+                self._hl_actor.VisibilityOff()
+            return
+        self._hl_timer.start()
+
+    def _update_hidden(self):
+        """Dashed back lines: read the depth buffer, find line samples behind surfaces, draw them as dashes."""
+        from . import hiddenline as HL
+        if getattr(self, "back_mode", "solid") != "dashed":
+            return
+        self._hl_busy = True
+        try:
+            if self._hl_actor is not None:
+                self._hl_actor.VisibilityOff()
+            W, H = self.plotter.ren_win.GetSize()
+            if W < 4 or H < 4:
+                return
+            if getattr(self, "_hl_depth", None) is None:
+                self._hl_depth = HL.DepthClassifier()
+            tris = []
+            for owner, g, col, dim in self._items():
+                if dim:
+                    continue
+                sm = HL.surface_mesh(g)
+                if sm is not None and len(sm[1]):
+                    tris.append(sm[0][sm[1]])
+            T = np.vstack(tris) if tris else np.zeros((0, 3, 3))
+            from scipy.ndimage import maximum_filter
+            Zraw, cam = self._hl_depth.depth_camera(T, self.ren.GetActiveCamera(), W, H)
+            Z = maximum_filter(Zraw, size=3)   # depth: larger = farther; be forgiving at outlines
+            near, far = cam.GetClippingRange()
+            M = np.array([[cam.GetCompositeProjectionTransformMatrix(W / H, -1, 1).GetElement(i, j)
+                           for j in range(4)] for i in range(4)])
+            par = bool(cam.GetParallelProjection())
+            eye = np.array(cam.GetPosition())
+            dop = np.array(cam.GetDirectionOfProjection())
+
+            def lin(d):   # depth buffer value -> distance from the eye
+                zn = 2 * d - 1
+                return (2 * near * far) / ((far + near) - zn * (far - near)) if not par else near + d * (far - near)
+            pls = []
+            for owner, g, col, dim in self._items():
+                if dim or g.kind == "point":
+                    continue
+                prep = self._prep(g)
+                if "segs" in prep:
+                    S = np.asarray(prep["segs"], float).reshape(-1, 2, 3)
+                    pls += list(S)
+                if "line" in prep:
+                    pls.append(np.asarray(prep["line"], float))
+                if prep.get("curved"):
+                    try:
+                        sil = HL.silhouettes(g, direction=dop) if par else HL.silhouettes(g, eye=eye)
+                        pls += list(sil)
+                    except Exception:
+                        pass
+            self._hl_cam = self._cam_state()
+            dash_segs = []
+            fov = math.radians(cam.GetViewAngle())
+            for pl in pls:
+                pl = np.asarray(pl, float)
+                if len(pl) < 2:
+                    continue
+                # resample to ~2 px steps
+                h = np.c_[pl, np.ones(len(pl))] @ M.T
+                if (h[:, 3] <= 1e-9).any():
+                    continue
+                sx = (h[:, 0] / h[:, 3] + 1) * W / 2
+                sy = (h[:, 1] / h[:, 3] + 1) * H / 2
+                step = np.hypot(np.diff(sx), np.diff(sy))
+                pts = [pl[:1]]
+                for k in range(len(pl) - 1):
+                    n = max(1, int(step[k] / 2.0))
+                    t = np.linspace(0, 1, n + 1)[1:, None]
+                    pts.append(pl[k] + (pl[k + 1] - pl[k]) * t)
+                P = np.vstack(pts)
+                h = np.c_[P, np.ones(len(P))] @ M.T
+                w_ = h[:, 3]
+                x = (h[:, 0] / w_ + 1) * W / 2
+                y = (h[:, 1] / w_ + 1) * H / 2
+                d = (h[:, 2] / w_ + 1) / 2
+                inside = (x >= 0) & (x < W) & (y >= 0) & (y < H) & (d > 0) & (d < 1)
+                if not inside.any():
+                    continue
+                xi = np.clip(x.astype(int), 0, W - 1)
+                yi = np.clip(y.astype(int), 0, H - 1)
+                dist = lin(d)
+                buf = lin(Z[yi, xi])
+                if par:
+                    tol = 3 * cam.GetParallelScale() * 2 / H
+                    ppu = np.full(len(P), H / (2 * cam.GetParallelScale()))
+                else:
+                    pix = 2 * dist * math.tan(fov / 2) / H
+                    tol = 3 * pix
+                    ppu = 1.0 / np.maximum(pix, 1e-12)
+                hidden = inside & (dist > buf + tol)
+                if not hidden.any():
+                    continue
+                k = 0
+                n = len(P)
+                while k < n:
+                    if not hidden[k]:
+                        k += 1
+                        continue
+                    j = k
+                    while j < n and hidden[j]:
+                        j += 1
+                    seg = P[max(0, k - 1):j]
+                    if len(seg) >= 2:
+                        dash_segs.append(HL.dashes(seg, 6.0, 4.0, ppu[max(0, k - 1):j]))
+                    k = j
+            if self._hl_actor is not None:
+                self._hl_ren.RemoveActor(self._hl_actor)
+                self._hl_actor = None
+            if dash_segs:
+                D = np.vstack([d for d in dash_segs if len(d)]) if any(len(d) for d in dash_segs) else None
+                if D is not None:
+                    n = len(D)
+                    pd = pv.PolyData(D.reshape(-1, 3), lines=np.hstack([np.full((n, 1), 2),
+                                                                        np.arange(2 * n).reshape(-1, 2)]).ravel())
+                    m = vtk.vtkPolyDataMapper()
+                    m.SetInputData(pd)
+                    a = vtk.vtkActor()
+                    a.SetMapper(m)
+                    pal = self.settings.palette()
+                    a.GetProperty().SetColor(*(np.asarray(self._rgb(pal.get("muted", "#8a8f98")), float) /
+                                               (255.0 if np.max(self._rgb(pal.get("muted", "#8a8f98"))) > 1 else 1.0)))
+                    a.GetProperty().SetLineWidth(1.0)
+                    a.GetProperty().LightingOff()
+                    a.PickableOff()
+                    self._hl_ren.AddActor(a)
+                    self._hl_actor = a
+            self.plotter.render()
+        except Exception as e:
+            print("[forma] dashed back lines:", e, flush=True)
+        finally:
+            self._hl_busy = False
+
     def rebuild(self):
         for a, _ in self.batches:
             self.plotter.remove_actor(a, render=False)
@@ -542,6 +779,7 @@ class View3D(QtWidgets.QWidget):
             self._build_grips()
             self.gumball.refresh()
         self.plotter.render()
+        self._schedule_hidden()
 
     def _update_ssao(self):
         """Soft ambient-occlusion shading, scaled to the size of the scene."""
@@ -567,6 +805,8 @@ class View3D(QtWidgets.QWidget):
         sel_rgb = self._rgb(self.settings.color("selection"))
         sel_idx = np.array([i for i, o in enumerate(self._owner_list) if o in sel], np.int32)
         for a, m in self.batches:
+            if m.get("sil"):
+                continue
             rgb = m["base"].copy()
             if len(sel_idx):
                 mask = np.isin(m["pown"], sel_idx)

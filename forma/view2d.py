@@ -56,6 +56,13 @@ class View2D(QtWidgets.QWidget):
         self.view_name = "Top"
         self.R = VIEWS["Top"]
         self._vcache = {}
+        self.back_mode = getattr(settings, "back_lines_2d", "solid")   # solid | dashed | hidden
+        self._hl = {"key": None, "paths": {}}
+        self._hl_timer = QtCore.QTimer(self)
+        self._hl_timer.setSingleShot(True)
+        self._hl_timer.setInterval(60)
+        self._hl_timer.timeout.connect(self._compute_hidden)
+        self._classifier = None
         doc.subscribe(self._doc_changed)
         ix.preview_changed.connect(self.update)
         ix.changed.connect(self.update)
@@ -132,9 +139,10 @@ class View2D(QtWidgets.QWidget):
             if g.kind == "point":
                 pass
             elif g.kind in ("mesh", "brep"):
-                for a, b in G.feature_edges(g):
-                    p.moveTo(a[0], a[1])
-                    p.lineTo(b[0], b[1])
+                for pl in self.lines_for(g):
+                    p.moveTo(pl[0][0], pl[0][1])
+                    for q in pl[1:]:
+                        p.lineTo(q[0], q[1])
             else:
                 s = g.sample()
                 if len(s):
@@ -146,6 +154,98 @@ class View2D(QtWidgets.QWidget):
             self._paths[key] = p
         return p
 
+    def lines_for(self, vg):
+        """Polylines (view coords) drawn for a surface object: edges, isocurves and its outline from this view."""
+        from . import hiddenline as HL
+        try:
+            lines = HL.edge_lines(vg)
+            sil = HL.silhouettes(vg, direction=(0.0, 0.0, -1.0))
+            return lines + [seg for seg in sil]
+        except Exception as e:
+            print("[forma] draft linework:", type(e).__name__, e, flush=True)
+            return [np.array([a, b]) for a, b in G.feature_edges(vg)]
+
+    def set_back_mode(self, mode):
+        self.back_mode = mode
+        try:
+            self.settings.back_lines_2d = mode
+            self.settings.save()
+        except Exception:
+            pass
+        self._hl = {"key": None, "paths": {}}
+        self.update()
+
+    def _hl_key(self):
+        return (getattr(self.doc, "version", 0), self.view_name, self.back_mode)
+
+    def _compute_hidden(self):
+        """Split all linework into visible and hidden parts for the current view (depth buffer)."""
+        from . import hiddenline as HL
+        key = self._hl_key()
+        if self._hl["key"] == key or self.back_mode == "solid":
+            return
+        if self._classifier is None:
+            self._classifier = HL.DepthClassifier()
+        tris, lines, owners = [], [], []
+        for owner, g, col, dim in self.doc.display("2d"):
+            if dim or g.kind == "point":
+                continue
+            vg = self._vg(g)
+            sm = HL.surface_mesh(vg) if vg.kind in ("mesh", "brep") else None
+            if sm is not None and len(sm[1]):
+                tris.append(sm[0][sm[1]])
+            pls = self.lines_for(vg) if vg.kind in ("mesh", "brep") else [np.asarray(vg.sample(), float)]
+            for pl in pls:
+                if len(pl) >= 2:
+                    lines.append(np.asarray(pl, float))
+                    owners.append((owner, id(g)))
+        if not lines:
+            self._hl = {"key": key, "paths": {}}
+            return
+        T = np.vstack(tris) if tris else np.zeros((0, 3, 3))
+        allp = np.vstack(lines + ([T.reshape(-1, 3)] if len(T) else []))
+        bounds = (allp.min(0), allp.max(0))
+        runs = self._classifier.classify(T, lines, bounds)
+        # hidden lines that project onto each other (front and back isocurves, ...) would overlay two dash
+        # patterns and look solid: keep one of each
+        tol = max(float(np.ptp(allp[:, :2], axis=0).max()) / 4000.0, 1e-9)
+        seen = set()
+        dedup = []
+        for rr in runs:
+            keep = []
+            for pts, visible in rr:
+                if not visible:
+                    q = np.round(np.asarray(pts)[[0, len(pts) // 2, -1], :2] / tol).astype(np.int64)
+                    k1 = tuple(map(tuple, q))
+                    k2 = tuple(map(tuple, q[::-1]))
+                    if k1 in seen or k2 in seen:
+                        continue
+                    seen.add(k1)
+                keep.append((pts, visible))
+            dedup.append(keep)
+        runs = dedup
+        paths = {}
+        raw = {}
+        for ow, rr in zip(owners, runs):
+            raw.setdefault(ow, []).extend(rr)
+            vis, hid = paths.setdefault(ow, (QtGui.QPainterPath(), QtGui.QPainterPath()))
+            for pts, visible in rr:
+                pp = vis if visible else hid
+                pp.moveTo(pts[0][0], pts[0][1])
+                for q in pts[1:]:
+                    pp.lineTo(q[0], q[1])
+        self._hl = {"key": key, "paths": paths, "runs": raw}
+        self.update()
+
+    def hidden_runs(self):
+        """{(owner, id(geom)): [(points (k,3) view coords, visible)]} for the current view, or None (back
+        lines shown normally)."""
+        if self.back_mode == "solid":
+            return None
+        if self._hl["key"] != self._hl_key():
+            self._compute_hidden()
+        return self._hl.get("runs") if self._hl["key"] == self._hl_key() else None
+
     def paintEvent(self, ev):
         c = self.palette_colors()
         qp = QtGui.QPainter(self)
@@ -156,6 +256,12 @@ class View2D(QtWidgets.QWidget):
         T = self.world_transform()
         sel = self.doc.selection
         # objects
+        hl = None
+        if self.back_mode != "solid":
+            if self._hl["key"] == self._hl_key():
+                hl = self._hl["paths"]
+            elif not self._hl_timer.isActive():
+                self._hl_timer.start()
         for owner, g, col, dim in self.doc.display("2d"):
             color = QtGui.QColor(c["selection"] if owner in sel else col)
             if c["mode"] == "light" and col.lower() in ("#d0d0d0", "#ffffff"):
@@ -172,7 +278,22 @@ class View2D(QtWidgets.QWidget):
                 qp.drawRect(QtCore.QRectF(s.x() - 3, s.y() - 3, 6, 6))
                 continue
             qp.setTransform(T)
-            qp.drawPath(self.path_for(self._vg(g)))
+            pair = hl.get((owner, id(g))) if hl is not None and not dim else None
+            if pair is None:
+                qp.drawPath(self.path_for(self._vg(g)))
+            else:
+                qp.drawPath(pair[0])
+                if self.back_mode == "dashed" and not pair[1].isEmpty():
+                    dpen = QtGui.QPen(pen)
+                    dpen.setStyle(QtCore.Qt.CustomDashLine)
+                    dpen.setDashPattern([4, 3])
+                    dpen.setWidthF(max(0.9, pen.widthF() * 0.75))
+                    dc = QtGui.QColor(dpen.color())
+                    dc.setAlphaF(dc.alphaF() * 0.75)
+                    dpen.setColor(dc)
+                    qp.setPen(dpen)
+                    qp.drawPath(pair[1])
+                    qp.setPen(pen)
         qp.setTransform(QtGui.QTransform())
         # preview
         prev = self.ix.preview()

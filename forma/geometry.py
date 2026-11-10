@@ -30,6 +30,10 @@ def P(*xyz) -> np.ndarray:
     return a
 
 
+# caches derived from the geometry (never saved, dropped when the geometry is transformed)
+DERIVED = ("_shape", "_tess", "_props", "_grid", "_poly", "_iso", "_hl_adj", "_trimesh")
+
+
 class Geom:
     def __init__(self, kind: str, space: str = "3d", layer: str = "Default",
                  name: str = "", id: str | None = None, **data):
@@ -51,7 +55,7 @@ class Geom:
         if self.kind == "brep":
             _brep().freeze(self)
             d = dict(self.__dict__)
-            d["data"] = {k: v for k, v in self.data.items() if k not in ("_shape", "_tess", "_props", "_grid", "_poly")}
+            d["data"] = {k: v for k, v in self.data.items() if k not in DERIVED}
             return d
         return self.__dict__
 
@@ -271,6 +275,9 @@ class Geom:
             return _brep().transform(self, M, keep_id=keep_id)
         g = self.copy(keep_id=keep_id)
         d = g.data
+        for key in DERIVED:
+            if key != "_shape":
+                d.pop(key, None)
         k = self.kind
         if k == "point":
             d["p"] = xform_pts(M, d["p"].reshape(1, 3))[0]
@@ -299,7 +306,7 @@ class Geom:
         return {"kind": self.kind, "space": self.space, "layer": self.layer, "name": self.name,
                 "id": self.id,
                 "data": {k: ({"__nd__": v.tolist()} if isinstance(v, np.ndarray) else v)
-                         for k, v in self.data.items() if k not in ("_shape", "_tess", "_props", "_edit", "_grid", "_poly")}}
+                         for k, v in self.data.items() if k not in DERIVED + ("_edit",)}}
 
     @staticmethod
     def from_dict(d):

@@ -39,7 +39,7 @@ if sys.platform == "darwin":
                  info_plist={"CFBundleName": "Forma", "CFBundleDisplayName": "Forma",
                              "NSHumanReadableCopyright": "Created by catsyntax",
                              "NSHighResolutionCapable": True,
-                             "CFBundleShortVersionString": "0.8.0",
+                             "CFBundleShortVersionString": "0.8.1",
                              "CFBundleDocumentTypes": [{"CFBundleTypeName": "Forma project",
                                                         "CFBundleTypeExtensions": ["forma"],
                                                         "CFBundleTypeRole": "Editor"}]})
