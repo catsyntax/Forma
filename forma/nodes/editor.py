@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 import math
 import uuid
@@ -11,6 +12,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .. import geometry as G
 from ..geometry import Geom
+from .userlib import ENGINES, engine_source
 from .registry import NODE_TYPES, DEFAULT_PY_CODE, categories, flatten
 from .solver import ports, downstream, topo_order
 from .compute import ComputeManager
@@ -257,11 +259,18 @@ class NodeItem(QtWidgets.QGraphicsItem):
     def mouseDoubleClickEvent(self, ev):
         if self.ntype.widget == "code":
             self.editor.edit_code(self.nid)
+        elif self.ntype.name in DESIGNERS:
+            self.editor.open_designer(self.nid)
+        elif self.ntype.name in ENGINES:
+            self.editor.edit_engine(self.nid)
         else:
             super().mouseDoubleClickEvent(ev)
 
 
 # ===================================================================== search popup
+DESIGNERS = {"Modular Plan Generator": "Open Plan Designer"}
+
+
 class NodeSearch(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent, QtCore.Qt.Popup | QtCore.Qt.FramelessWindowHint)
@@ -822,43 +831,44 @@ class NodeEditor(QtWidgets.QWidget):
             self.items[nid].update()
             self.mark_dirty([nid])
 
+    def _theme_dark(self):
+        try:
+            return self.settings.palette().get("mode") != "light"
+        except Exception:
+            return True
+
+    def _script_fetch(self, nid):
+        def fetch():
+            it = self.items.get(nid)
+            if it is None:
+                return ("", "The node was deleted.")
+            if it.status in ("dirty", "running") or self.compute.busy:
+                return None
+            if it.status == "error":
+                return ("", it.message or "Error")
+            if it.status in ("cancelled", "disabled"):
+                return ("", it.status.capitalize())
+            out = self.results.get(nid, {})
+            return (summarize(out.get("out")) if out.get("out") else "", None)
+        return fetch
+
     def edit_code(self, nid):
+        """Grasshopper-style script editor for a Python node (non-modal; Run keeps it open)."""
+        from ..codeeditor import ScriptWindow
         node = self.graph["nodes"][nid]
         pr = node["props"]
-        dlg = QtWidgets.QDialog(self)
-        dlg.setWindowTitle("Python node")
-        dlg.resize(720, 560)
-        lay = QtWidgets.QVBoxLayout(dlg)
-        form = QtWidgets.QFormLayout()
-        ins = QtWidgets.QLineEdit(", ".join(pr.get("inputs", [])))
-        outs = QtWidgets.QLineEdit(", ".join(pr.get("outputs", [])))
-        lists = QtWidgets.QLineEdit(", ".join(pr.get("list_inputs", [])))
-        lists.setPlaceholderText("inputs that receive whole lists (others run once per item)")
-        form.addRow("Inputs", ins)
-        form.addRow("Outputs", outs)
-        form.addRow("List inputs", lists)
-        lay.addLayout(form)
-        ed = QtWidgets.QPlainTextEdit(pr.get("code", ""))
-        font = QtGui.QFont("Menlo")
-        font.setStyleHint(QtGui.QFont.Monospace)
-        ed.setFont(font)
-        ed.setTabStopDistance(28)
-        lay.addWidget(ed, 1)
-        note = QtWidgets.QLabel("Runs in a separate process. Long loops can call progress(fraction). "
-                                "If it hangs, use Cancel in the calculation popup.")
-        note.setObjectName("Muted")
-        note.setWordWrap(True)
-        lay.addWidget(note)
-        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
-        bb.accepted.connect(dlg.accept)
-        bb.rejected.connect(dlg.reject)
-        lay.addWidget(bb)
-        if dlg.exec():
-            split = lambda s: [x.strip() for x in s.split(",") if x.strip().isidentifier()]
-            pr["inputs"] = split(ins.text()) or ["x"]
-            pr["outputs"] = [o for o in split(outs.text()) if o != "out"] or ["a"]
-            pr["list_inputs"] = split(lists.text())
-            pr["code"] = ed.toPlainText()
+        win = getattr(self, "_script_windows", {}).get(nid)
+        if win is not None:
+            win.raise_()
+            win.activateWindow()
+            return
+
+        def apply(code, ports):
+            ins, outs, lists = ports
+            pr["inputs"] = ins or ["x"]
+            pr["outputs"] = [o for o in outs if o != "out"] or ["a"]
+            pr["list_inputs"] = lists
+            pr["code"] = code
             valid_in = set(pr["inputs"])
             valid_out = set(pr["outputs"]) | {"out"}
             for w in list(self.graph["wires"]):
@@ -867,6 +877,71 @@ class NodeEditor(QtWidgets.QWidget):
             self.items[nid].build()
             self.update_wires(nid)
             self.mark_dirty([nid])
+            if not self.auto:
+                self.solve()
+
+        rhino = re.search(r"^\s*(import|from)\s+(Rhino|rhinoscriptsyntax|scriptcontext|Grasshopper|ghpythonlib|Eto)\b",
+                          pr.get("code", ""), re.M)
+        note = ("This script came from Grasshopper and uses Rhino-only modules (Rhino, rhinoscriptsyntax, "
+                "scriptcontext, Eto), which don't exist in Forma. Replace those calls with Forma's geometry "
+                "functions (box, polyline, extrude, … are available directly) to run it here."
+                if rhino else "Inputs are variables; assign the outputs. print() goes to the output pane. "
+                "Ctrl+Enter runs, Ctrl+/ comments, Tab / Shift+Tab indents.")
+        win = ScriptWindow(self.window(), f"Python — {node.get('label') or 'script'}", pr.get("code", ""),
+                           apply, self._script_fetch(nid),
+                           ports={"inputs": pr.get("inputs", []), "outputs": pr.get("outputs", []),
+                                  "list_inputs": pr.get("list_inputs", [])},
+                           note=note, dark=self._theme_dark())
+        self._remember_window(nid, win)
+
+    def edit_engine(self, nid):
+        """Edit the Python engine of a ported tool (Space Syntax 3D, Modular Plan Generator)."""
+        from ..codeeditor import ScriptWindow
+        node = self.graph["nodes"][nid]
+        pr = node["props"]
+        modname = ENGINES[node["type"]]
+        win = getattr(self, "_script_windows", {}).get(nid)
+        if win is not None:
+            win.raise_()
+            win.activateWindow()
+            return
+        builtin = lambda: engine_source(modname)
+
+        def apply(code, ports):
+            if code.strip() == builtin().strip():
+                pr.pop("engine_code", None)
+            else:
+                pr["engine_code"] = code
+            self.items[nid].update()
+            self.mark_dirty([nid])
+            if not self.auto:
+                self.solve()
+
+        note = ("This is the engine behind this node. Edit and Run to change how it computes; the edited code is "
+                "saved with the project (Reset to built-in code undoes it). Keep the function names the node "
+                "calls: " + ("_compute_core, METRIC_NAMES." if modname == "vga3d" else
+                             "generate_plans, bbox_of, plan_score, footprint, STANDARDS."))
+        win = ScriptWindow(self.window(), f"{node['type']} — engine code", pr.get("engine_code") or builtin(),
+                           apply, self._script_fetch(nid), reset_code=builtin, note=note, dark=self._theme_dark())
+        self._remember_window(nid, win)
+
+    def _remember_window(self, nid, win):
+        self._script_windows = getattr(self, "_script_windows", {})
+        self._script_windows[nid] = win
+        win.destroyed.connect(lambda *_: self._script_windows.pop(nid, None))
+        win.show()
+
+    def open_designer(self, nid):
+        from ..plandesigner import PlanDesigner
+        win = getattr(self, "_designers", {}).get(nid)
+        if win is None:
+            win = PlanDesigner(self, nid)
+            self._designers = getattr(self, "_designers", {})
+            self._designers[nid] = win
+            win.destroyed.connect(lambda *_: self._designers.pop(nid, None))
+        win.show()
+        win.raise_()
+        win.activateWindow()
 
     def set_refs(self, nid):
         ids = sorted(self.doc.selection)
@@ -890,6 +965,13 @@ class NodeEditor(QtWidgets.QWidget):
         a_en.setCheckable(True)
         a_en.setChecked(not node.get("disabled"))
         a_bake = m.addAction("Bake")
+        a_code = a_design = None
+        if node["type"] == "Python":
+            a_code = m.addAction("Edit code…")
+        elif node["type"] in ENGINES:
+            if node["type"] in DESIGNERS:
+                a_design = m.addAction(DESIGNERS[node["type"]] + "…")
+            a_code = m.addAction("Edit engine code…" + ("  (edited)" if node["props"].get("engine_code") else ""))
         a_ren = m.addAction("Rename...")
         a_dup = m.addAction("Duplicate")
         m.addSeparator()
@@ -905,6 +987,10 @@ class NodeEditor(QtWidgets.QWidget):
             self.mark_dirty([nid])
         elif act is a_bake:
             self.bake([nid])
+        elif act is not None and act is a_code:
+            (self.edit_code if node["type"] == "Python" else self.edit_engine)(nid)
+        elif act is not None and act is a_design:
+            self.open_designer(nid)
         elif act is a_ren:
             t, ok = QtWidgets.QInputDialog.getText(self, "Rename node", "Label:", text=node.get("label") or node["type"])
             if ok:
@@ -1068,23 +1154,51 @@ class NodeEditor(QtWidgets.QWidget):
             return
         self.bake(nids)
 
-    def bake(self, nids):
+    def bake(self, nids, outputs=None, replace_root=None):
+        """Bake node geometry. Geometry that carries a 'bake_layer' (e.g. 'GH_PLANS::PLAN_01::L1') goes to that
+        (nested) layer, created with 'bake_color'; the rest goes to the current layer. outputs limits which
+        outputs are baked; replace_root deletes that layer tree first (like 'Replace previous')."""
         space = "3d" if self.bake_target.currentIndex() == 0 else "2d"
         gs = []
         for nid in nids:
-            for g in self.node_geoms(nid):
-                c = g.copy(keep_id=False, space=space, layer=self.doc.current_layer)
+            res = self.results.get(nid, {})
+            src = []
+            for k, v in res.items():
+                if outputs is None or k in outputs:
+                    src += [g for g in flatten(v) if isinstance(g, Geom)]
+            for g in src:
+                lay = g.data.get("bake_layer") or self.doc.current_layer
+                c = g.copy(keep_id=False, space=space, layer=lay)
+                for k in ("bake_layer", "bake_color", "role"):
+                    c.data.pop(k, None)
+                c._bake = (g.data.get("bake_layer"), g.data.get("bake_color"))
                 if space == "2d" and c.kind != "instance":
-                    gs += G.project_to_plane_2d([c]) if c.kind in ("mesh", "brep") else [c.transformed(np.diag([1, 1, 0, 1.0]))]
+                    parts = G.project_to_plane_2d([c]) if c.kind in ("mesh", "brep") else [c.transformed(np.diag([1, 1, 0, 1.0]))]
+                    for x in parts:
+                        x._bake = c._bake
+                    gs += parts
                 else:
                     gs.append(c)
         if not gs:
             self.message.emit("Nothing to bake (no geometry on those nodes).")
             return
-        for g in gs:
-            g.space = space
-            g.layer = self.doc.current_layer
         self.doc.checkpoint("Bake")
+        if replace_root and self.doc.layer(replace_root):
+            self.doc.delete_layer(replace_root, delete_objects=True, checkpoint=False)
+        for g in gs:
+            lay, col = getattr(g, "_bake", (None, None))
+            if lay:
+                if not self.doc.layer(lay):
+                    parts = lay.split("::")
+                    for k in range(1, len(parts)):   # parent layers in neutral greys (like the Rhino version)
+                        par = "::".join(parts[:k])
+                        if not self.doc.layer(par):
+                            self.doc.add_layer(par, "#6e6e6e" if k == 1 else "#8c8c8c")
+                    self.doc.add_layer(lay, col)
+            g.__dict__.pop("_bake", None)
+            g.space = space
+            if not self.doc.layer(g.layer):
+                g.layer = self.doc.current_layer
         self.doc.add(gs)
         self.message.emit(f"Baked {len(gs)} objects to the {'Model' if space == '3d' else 'Draft'} workspace.")
 
@@ -1105,7 +1219,12 @@ class NodeEditor(QtWidgets.QWidget):
             self.load_graph(self.doc.node_graph)
 
     def to_dict(self):
-        return {"nodes": self.graph["nodes"], "wires": self.graph["wires"]}
+        d = {"nodes": self.graph["nodes"], "wires": self.graph["wires"]}
+        used = {n["props"].get("gh_src") for n in self.graph["nodes"].values()}
+        src = {k: v for k, v in (self.graph.get("gh_sources") or {}).items() if k in used}
+        if src:
+            d["gh_sources"] = src   # the original definitions, so 'Save to Grasshopper' works after reopening
+        return d
 
     def load_graph(self, g):
         for it in list(self.items.values()):
@@ -1113,7 +1232,7 @@ class NodeEditor(QtWidgets.QWidget):
         for it in list(self.wire_items.values()):
             self.scene.removeItem(it)
         self.items, self.wire_items, self.results, self.dirty = {}, {}, {}, set()
-        self.graph = {"nodes": {}, "wires": []}
+        self.graph = {"nodes": {}, "wires": [], "gh_sources": dict((g or {}).get("gh_sources") or {})}
         if not g:
             self.emit_preview()
             return
@@ -1137,6 +1256,45 @@ class NodeEditor(QtWidgets.QWidget):
         self.compute.shutdown()
 
     # ------------------------------------------------------------ Grasshopper
+    def export_grasshopper(self):
+        """Save the imported definition back to a .gh file with the values and code edited in Forma."""
+        from .. import ghimport
+        sources = self.graph.get("gh_sources") or {}
+        used = {n["props"].get("gh_src") for n in self.graph["nodes"].values()}
+        sources = {k: v for k, v in sources.items() if k in used}
+        if not sources:
+            QtWidgets.QMessageBox.information(
+                self, "Save to Grasshopper",
+                "Only graphs imported from a Grasshopper file can be saved back: Forma writes your edited slider, "
+                "toggle and panel values and Python code into that definition.\n\nImport a .gh first (Import "
+                "Grasshopper…).")
+            return
+        key = next(iter(sources))
+        if len(sources) > 1:
+            names = [f"{v['name']}" for v in sources.values()]
+            name, ok = QtWidgets.QInputDialog.getItem(self, "Save to Grasshopper", "Definition:", names, 0, False)
+            if not ok:
+                return
+            key = list(sources)[names.index(name)]
+        base = os.path.splitext(sources[key]["name"])[0]
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save to Grasshopper", base + "_forma.gh",
+                                                        "Grasshopper (*.gh)")
+        if not path:
+            return
+        if not path.lower().endswith(".gh"):
+            path += ".gh"
+        try:
+            report = ghimport.export(self.graph, path, key)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Save to Grasshopper failed", str(e))
+            return
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Save to Grasshopper")
+        box.setText(report[0])
+        box.setInformativeText("\n\n".join(report[1:]) or "Open it in Grasshopper as usual.")
+        box.exec()
+        self.message.emit(report[0])
+
     GH_UNITS = [("Metres", "m"), ("Millimetres", "mm"), ("Centimetres", "cm"), ("Feet", "ft"), ("Inches", "in")]
 
     def import_grasshopper(self, path, doc_units="mm"):
@@ -1170,6 +1328,8 @@ class NodeEditor(QtWidgets.QWidget):
             return
         if mode.currentIndex() == 1 and self.graph["nodes"]:
             self.delete_nodes(list(self.graph["nodes"]))
+            self.graph["gh_sources"] = {}
+        self.graph.setdefault("gh_sources", {}).update(g.get("gh_sources", {}))
         dx = dy = 0.0
         if self.graph["nodes"] and g["nodes"]:
             xs = [n["pos"][0] for n in self.graph["nodes"].values()]

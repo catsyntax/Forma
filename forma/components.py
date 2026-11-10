@@ -34,6 +34,8 @@ class ComponentDef:
         self.description = description
         self.version = version
         self.base_point = list(base_point)
+        self.hidden = False      # hide / lock every instance of this component
+        self.locked = False
         self._cache = {}
 
     def __getstate__(self):
@@ -42,6 +44,8 @@ class ComponentDef:
         return d
 
     def __setstate__(self, d):
+        d.setdefault("hidden", False)
+        d.setdefault("locked", False)
         self.__dict__.update(d)
 
     @property
@@ -100,13 +104,16 @@ class ComponentDef:
         return {"id": self.id, "name": self.name, "geoms": [g.to_dict() for g in self.geoms],
                 "code": self.code, "params": self.params, "connectors": self.connectors,
                 "category": self.category, "description": self.description,
-                "version": self.version, "base_point": self.base_point}
+                "version": self.version, "base_point": self.base_point,
+                "hidden": self.hidden, "locked": self.locked}
 
     @staticmethod
     def from_dict(d):
-        return ComponentDef(d["name"], [Geom.from_dict(g) for g in d.get("geoms", [])], d.get("code", ""),
-                            d.get("params", {}), d.get("connectors", []), d.get("category", "My Components"),
-                            d.get("description", ""), d.get("id"), d.get("version", 0), d.get("base_point", (0, 0, 0)))
+        cd = ComponentDef(d["name"], [Geom.from_dict(g) for g in d.get("geoms", [])], d.get("code", ""),
+                          d.get("params", {}), d.get("connectors", []), d.get("category", "My Components"),
+                          d.get("description", ""), d.get("id"), d.get("version", 0), d.get("base_point", (0, 0, 0)))
+        cd.hidden, cd.locked = bool(d.get("hidden")), bool(d.get("locked"))
+        return cd
 
 
 class Params(dict):

@@ -13,12 +13,33 @@ from . import components as C
 LAYER_COLORS = ["#d0d0d0", "#e05a47", "#4f9de0", "#58b368", "#e0b347", "#a66ee0", "#47c9c2"]
 
 
+SEP = "::"   # sublayers use full paths, like Rhino: "Plans::PLAN_01::Rooms"
+WEIGHTS = [0.0, 0.09, 0.13, 0.18, 0.25, 0.35, 0.5, 0.7, 1.0, 1.4, 2.0]   # mm; 0 = default
+
+
 @dataclass
 class Layer:
     name: str
     color: str = "#d0d0d0"
     visible: bool = True
     locked: bool = False
+    weight: float = 0.0      # line weight in mm (0 = default); used on screen and in PDF/DWG
+    expanded: bool = True    # tree state in the Layers panel
+
+    @property
+    def short(self):
+        return self.name.split(SEP)[-1]
+
+    @property
+    def parent(self):
+        return SEP.join(self.name.split(SEP)[:-1]) or None
+
+
+def display_px(weight_mm, default):
+    """Screen line width for a print weight (0.25 mm ~ 1.4 px)."""
+    if not weight_mm:
+        return default
+    return max(0.8, min(10.0, weight_mm * 5.6))
 
 
 def _mesh_preview(g, M):
@@ -149,14 +170,94 @@ class Document:
     def _iso(self, g):
         return self.isolated is None or g.id in self.isolated
 
+    # ----------------------------------------------------------- display state
+    def layers_on(self):
+        """Names of layers that are visible, counting their parents."""
+        by = {l.name: l for l in self.layers}
+        out = set()
+        for l in self.layers:
+            n, ok = l.name, True
+            while n:
+                L = by.get(n)
+                if L is not None and not L.visible:
+                    ok = False
+                    break
+                n = SEP.join(n.split(SEP)[:-1])
+            if ok:
+                out.add(l.name)
+        return out
+
+    def layers_locked(self):
+        by = {l.name: l for l in self.layers}
+        out = set()
+        for l in self.layers:
+            n = l.name
+            while n:
+                L = by.get(n)
+                if L is not None and L.locked:
+                    out.add(l.name)
+                    break
+                n = SEP.join(n.split(SEP)[:-1])
+        return out
+
+    def _def_flag(self, g, flag):
+        if g.kind != "instance":
+            return False
+        d = self.definitions.get(g.def_id)
+        return bool(d is not None and getattr(d, flag, False))
+
+    def is_shown(self, g, on=None):
+        on = self.layers_on() if on is None else on
+        return g.layer in on and not g.data.get("hidden") and not self._def_flag(g, "hidden") and self._iso(g)
+
+    def is_locked(self, g, locked=None):
+        locked = self.layers_locked() if locked is None else locked
+        return g.layer in locked or bool(g.data.get("locked")) or self._def_flag(g, "locked")
+
     def visible(self, space):
-        vis = {l.name for l in self.layers if l.visible}
-        return [g for g in self.objects.values() if self._in(g, space) and g.layer in vis and self._iso(g)]
+        on = self.layers_on()
+        return [g for g in self.objects.values() if self._in(g, space) and self.is_shown(g, on)]
 
     def selectable(self, space):
-        ok = {l.name for l in self.layers if l.visible and not l.locked}
-        return [g for g in self.objects.values() if self._in(g, space) and g.layer in ok and self._iso(g)
-                and (not self.editing or g.data.get("_edit"))]
+        on, locked = self.layers_on(), self.layers_locked()
+        return [g for g in self.objects.values() if self._in(g, space) and self.is_shown(g, on)
+                and not self.is_locked(g, locked) and (not self.editing or g.data.get("_edit"))]
+
+    def color_of(self, g):
+        return g.data.get("attr_color") or self.layer_color(g.layer)
+
+    def weight_of(self, oid):
+        """Line weight in mm for an object id (object override, else its layer; 0 = default)."""
+        g = self.objects.get(oid)
+        if g is None:
+            return 0.0
+        w = g.data.get("attr_weight")
+        if w:
+            return float(w)
+        l = self.layer(g.layer)
+        return float(l.weight) if l else 0.0
+
+    def set_attr(self, ids, key, value, label="Object properties"):
+        """Set (value) or clear (None) a display attribute on objects: attr_color, attr_weight, hidden, locked."""
+        ids = [i for i in ids if i in self.objects]
+        if not ids:
+            return
+        self.checkpoint(label)
+        for i in ids:
+            g = self.objects[i].copy()
+            if value is None or value is False:
+                g.data.pop(key, None)
+            else:
+                g.data[key] = value
+            self.objects[i] = g
+        if key in ("hidden", "locked"):
+            self.selection -= set(ids)
+            self.notify("selection")
+        self.notify("changed")
+        self.notify("layers")
+
+    def hidden_objects(self):
+        return [g for g in self.objects.values() if g.data.get("hidden")]
 
     # ----------------------------------------------------------- isolation
     def isolate(self, ids):
@@ -200,7 +301,7 @@ class Document:
             if g.id == hidden_inst:
                 continue
             dim = (bool(self.editing) and not g.data.get("_edit")) or bool(g.data.get("section"))
-            col = self.layer_color(g.layer)
+            col = self.color_of(g)
             for part in self.expand(g):
                 out.append((g.id, part, col, dim))
         return out
@@ -360,17 +461,122 @@ class Document:
         l = self.layer(name)
         return l.color if l else "#d0d0d0"
 
-    def add_layer(self, name=None, color=None):
+    def add_layer(self, name=None, color=None, parent=None):
+        """Create a layer (and any missing parents of a 'A::B::C' path). Returns the layer."""
         if name is None:
             i = len(self.layers)
-            name = f"Layer {i:02d}"
+            base = (parent + SEP) if parent else ""
+            name = f"{base}Layer {i:02d}"
             while self.layer(name):
                 i += 1
-                name = f"Layer {i:02d}"
-        if not self.layer(name):
-            self.layers.append(Layer(name, color or LAYER_COLORS[len(self.layers) % len(LAYER_COLORS)]))
-            self.notify("layers")
+                name = f"{base}Layer {i:02d}"
+        elif parent:
+            name = parent + SEP + name
+        parts = name.split(SEP)
+        for k in range(1, len(parts) + 1):
+            n = SEP.join(parts[:k])
+            if not self.layer(n):
+                l = Layer(n, color if k == len(parts) and color else LAYER_COLORS[len(self.layers) % len(LAYER_COLORS)])
+                # keep children right after their parent in the list
+                par = SEP.join(parts[:k - 1])
+                idx = len(self.layers)
+                if par:
+                    kids = [j for j, x in enumerate(self.layers) if x.name == par or x.name.startswith(par + SEP)]
+                    idx = (max(kids) + 1) if kids else idx
+                self.layers.insert(idx, l)
+        self.notify("layers")
         return self.layer(name)
+
+    def sublayers(self, name, deep=True):
+        return [l for l in self.layers if l.name.startswith(name + SEP) and (deep or l.parent == name)]
+
+    def rename_layer(self, old, new_short):
+        """Rename a layer (its last path part); sublayers and objects follow."""
+        l = self.layer(old)
+        if l is None or not new_short.strip() or SEP in new_short:
+            return False
+        new = (l.parent + SEP if l.parent else "") + new_short.strip()
+        if new == old or self.layer(new):
+            return False
+        self.checkpoint("Rename layer")
+        mapping = {}
+        for x in [l] + self.sublayers(old):
+            nn = new + x.name[len(old):]
+            mapping[x.name] = nn
+            x.name = nn
+        for g in list(self.objects.values()):
+            if g.layer in mapping:
+                self.objects[g.id] = g.copy(layer=mapping[g.layer])
+        if self.current_layer in mapping:
+            self.current_layer = mapping[self.current_layer]
+        self.notify("layers")
+        self.notify("changed")
+        return True
+
+    def move_layer(self, name, new_parent):
+        """Re-parent a layer (None = top level), keeping its sublayers and objects."""
+        l = self.layer(name)
+        if l is None or (new_parent and (new_parent == name or new_parent.startswith(name + SEP))):
+            return False
+        new = (new_parent + SEP if new_parent else "") + l.short
+        if new == name or self.layer(new):
+            return False
+        self.checkpoint("Move layer")
+        group = [l] + self.sublayers(name)
+        for x in group:
+            self.layers.remove(x)
+        mapping = {}
+        for x in group:
+            mapping[x.name] = new + x.name[len(name):]
+            x.name = mapping[x.name]
+        idx = len(self.layers)
+        if new_parent:
+            kids = [j for j, x in enumerate(self.layers) if x.name == new_parent or x.name.startswith(new_parent + SEP)]
+            idx = max(kids) + 1 if kids else idx
+        self.layers[idx:idx] = group
+        for g in list(self.objects.values()):
+            if g.layer in mapping:
+                self.objects[g.id] = g.copy(layer=mapping[g.layer])
+        if self.current_layer in mapping:
+            self.current_layer = mapping[self.current_layer]
+        self.notify("layers")
+        self.notify("changed")
+        return True
+
+    def delete_layer(self, name, delete_objects=False, checkpoint=True):
+        """Delete a layer and its sublayers. Their objects are deleted or moved to the parent/first layer."""
+        l = self.layer(name)
+        group = [l] + self.sublayers(name) if l else []
+        if not group or len(group) >= len(self.layers):
+            return False
+        if checkpoint:
+            self.checkpoint("Delete layer")
+        names = {x.name for x in group}
+        for x in group:
+            self.layers.remove(x)
+        target = l.parent if l.parent and self.layer(l.parent) else self.layers[0].name
+        for g in list(self.objects.values()):
+            if g.layer in names:
+                if delete_objects:
+                    self.objects.pop(g.id)
+                    self.selection.discard(g.id)
+                else:
+                    self.objects[g.id] = g.copy(layer=target)
+        if self.current_layer in names:
+            self.current_layer = target
+        self.notify("layers")
+        self.notify("changed")
+        return True
+
+    def move_to_layer(self, ids, layer):
+        ids = [i for i in ids if i in self.objects and self.objects[i].layer != layer]
+        if not ids or not self.layer(layer):
+            return
+        self.checkpoint("Move to layer")
+        for i in ids:
+            self.objects[i] = self.objects[i].copy(layer=layer)
+        self.notify("changed")
+        self.notify("layers")
 
     # ----------------------------------------------------------- files
     def to_json(self):
@@ -393,7 +599,8 @@ class Document:
         with open(path) as f:
             d = json.load(f)
         self.clear()
-        self.layers = [Layer(**l) for l in d.get("layers", [])] or [Layer("Default")]
+        fields = set(Layer.__dataclass_fields__)
+        self.layers = [Layer(**{k: v for k, v in l.items() if k in fields}) for l in d.get("layers", [])] or [Layer("Default")]
         self.current_layer = d.get("current_layer", self.layers[0].name)
         self.units = d.get("units", "mm")
         for od in d.get("objects", []):
@@ -417,10 +624,10 @@ class Document:
         if self._grip_cache[0] == key:
             return self._grip_cache[1]
         out = []
-        vis = {l.name for l in self.layers if l.visible}
+        on = self.layers_on()
         for oid in list(self.points_on):
             g = self.objects.get(oid)
-            if g is None or g.layer not in vis:
+            if g is None or not self.is_shown(g, on):
                 self.points_on.discard(oid)
                 continue
             pts = E.grips(g)

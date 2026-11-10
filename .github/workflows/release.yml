@@ -102,5 +102,6 @@ jobs:
             - Linux: Forma-Linux.tar.gz
             See "Download App" in the repository for step-by-step instructions.
 
-            New in 0.7: import Grasshopper definitions (.gh / .ghx) into the Nodes workspace, plus native
-            Space Syntax 3D (voxel VGA) and Modular Plan Generator nodes.
+            New in 0.8: layers with sublayers, line weights, per-object colour / hide / lock (and per component);
+            a Python script editor (Run, output, errors with line numbers) with editable engines; the Plan Designer
+            for the Modular Plan Generator; and saving node graphs back to Grasshopper (.gh).

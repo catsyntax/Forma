@@ -15,6 +15,7 @@ Wires are rebuilt between everything that came across.
 from __future__ import annotations
 
 import base64
+import os
 import re
 import uuid
 
@@ -164,7 +165,9 @@ def _var(p):
 def convert(path, length_scale=1.0):
     """Returns (graph, report_lines). length_scale converts GH lengths to Forma model units
     (1000 when the Rhino file was in metres and Forma works in millimetres)."""
-    root = ghfile.read(path)
+    raw = open(path, "rb").read()
+    root = ghfile.read_bytes(raw)
+    src_key = uuid.uuid4().hex[:8]
     defn = root.chunk("Definition")
     objs = defn.chunk("DefinitionObjects") if defn else None
     if objs is None:
@@ -179,7 +182,11 @@ def convert(path, length_scale=1.0):
 
     def add(type_, c, props=None, values=None, label=None):
         nid = uuid.uuid4().hex[:8]
-        nodes[nid] = {"type": type_, "props": props or {}, "values": values or {}, "pos": _pos(c), "preview": True}
+        props = dict(props or {})
+        if c.item("InstanceGuid"):
+            props["gh_guid"] = c.item("InstanceGuid")
+            props["gh_src"] = src_key
+        nodes[nid] = {"type": type_, "props": props, "values": values or {}, "pos": _pos(c), "preview": True}
         if label:
             nodes[nid]["label"] = label
         return nid
@@ -349,6 +356,7 @@ def convert(path, length_scale=1.0):
                     pr = nodes[s]["props"]
                     for k in ("value", "min", "max"):
                         pr[k] = pr[k] * length_scale
+                    pr["gh_scale"] = length_scale   # undone when saving back to Grasshopper
                     pr["decimals"] = 0 if length_scale >= 100 else pr["decimals"]
                     scaled.add(s)
         if scaled:
@@ -356,4 +364,125 @@ def convert(path, length_scale=1.0):
     summary = (f"Imported {len(nodes)} nodes and {len(wires)} wires: {counts['native']} native tool(s), "
                f"{counts['script']} Python script(s), {counts['known']} component(s), {counts['param']} parameter(s), "
                f"{counts['missing']} placeholder(s).")
-    return {"nodes": nodes, "wires": wires}, [summary] + report
+    for n in nodes.values():   # helper nodes added by Forma are not Grasshopper components
+        if n.get("label") in ("Brief", "Links (optional)", "Plans", "Report", "Code check", "metric (0-14)",
+                              "Progress", "Metric names") and n["type"] in ("Text", "Number Slider", "Panel"):
+            n["props"].pop("gh_guid", None)
+            n["props"]["gh_src"] = src_key
+            n["props"]["forma_helper"] = True
+    source = {"name": os.path.basename(path), "data": base64.b64encode(raw).decode("ascii")}
+    return {"nodes": nodes, "wires": wires, "gh_sources": {src_key: source}}, [summary] + report
+
+
+# ===================================================================== saving back
+def _patch_text(text, old, new):
+    """Apply the line edits that turn `old` into `new` to `text`, which contains old's blocks verbatim.
+    Returns (patched text, number of edits that could not be placed)."""
+    import difflib
+    o, n = old.splitlines(keepends=True), new.splitlines(keepends=True)
+    failed = 0
+    for tag, i1, i2, j1, j2 in reversed(difflib.SequenceMatcher(None, o, n, autojunk=False).get_opcodes()):
+        if tag == "equal":
+            continue
+        for ctx in (3, 2, 1, 0):
+            before = "".join(o[max(0, i1 - ctx):i1])
+            after = "".join(o[i2:i2 + ctx])
+            anchor = before + "".join(o[i1:i2]) + after
+            if not anchor:
+                break
+            if text.count(anchor) == 1:
+                k = text.index(anchor)
+                text = text[:k] + before + "".join(n[j1:j2]) + after + text[k + len(anchor):]
+                break
+        else:
+            failed += 1
+            continue
+        if not anchor:
+            failed += 1
+    return text, failed
+
+
+def export(graph, path, source_key=None):
+    """Write the imported Grasshopper definition back to `path` with the edits made in Forma.
+    Returns report lines."""
+    from .nodes.userlib import ENGINES, engine_source
+    sources = graph.get("gh_sources") or {}
+    if not sources:
+        raise ValueError("This graph was not imported from Grasshopper, so there is no definition to save back to.")
+    key = source_key or next(iter(sources))
+    root = ghfile.read_bytes(base64.b64decode(sources[key]["data"]))
+    objs = root.chunk("Definition").chunk("DefinitionObjects")
+    by_guid = {}
+    for obj in objs.chunks_named("Object"):
+        c = _container(obj)
+        if c.item("InstanceGuid"):
+            by_guid[c.item("InstanceGuid")] = (obj, c)
+    report, changed = [], 0
+    for nid, n in graph["nodes"].items():
+        pr = n.get("props", {})
+        if pr.get("forma_helper"):
+            continue
+        if pr.get("gh_src") != key:
+            if n["type"] not in ("Panel",) and not pr.get("gh_src"):
+                report.append(f"'{n.get('label') or n['type']}' was added in Forma and has no Grasshopper equivalent "
+                              f"here, so it is not saved.")
+            continue
+        hit = by_guid.get(pr.get("gh_guid"))
+        if hit is None:
+            continue
+        obj, c = hit
+        t = n["type"]
+        label = n.get("label") or t
+        if t == "Number Slider":
+            sl = c.chunk("Slider")
+            sc_ = float(pr.get("gh_scale", 1.0)) or 1.0
+            for k, item in (("value", "Value"), ("min", "Min"), ("max", "Max")):
+                if k in pr and sl is not None and sl.item(item) is not None:
+                    v = float(pr[k]) / sc_
+                    if abs(float(sl.item(item)) - v) > 1e-9 * max(1.0, abs(v)):
+                        sl.set_item(item, v)
+                        changed += 1
+        elif t == "Toggle":
+            if bool(c.item("ToggleValue", default=False)) != bool(pr.get("value")):
+                c.set_item("ToggleValue", bool(pr.get("value")), 1)
+                changed += 1
+        elif t == "Text":
+            if c.item("UserText") is not None and c.item("UserText") != pr.get("value", ""):
+                c.set_item("UserText", str(pr.get("value", "")), 10)
+                changed += 1
+        elif t == "Python":
+            sp = _script_parts(c)
+            if sp and sp[0] != pr.get("code"):
+                _set_script(c, pr.get("code", ""))
+                changed += 1
+                ins = [_var(p) for p in sp[1]]
+                outs = [_var(p) for p in sp[2] if p.item("Name") != "out"]
+                if ins != list(pr.get("inputs", ins)) or [o for o in outs if o != "out"] != list(pr.get("outputs", outs)):
+                    report.append(f"'{label}': code saved; its inputs/outputs were changed in Forma, add the same "
+                                  f"ones on the component in Grasshopper (zoom in and use + / -).")
+        elif t in ENGINES:
+            sp = _script_parts(c)
+            if pr.get("engine_code") and sp:
+                patched, failed = _patch_text(sp[0], engine_source(ENGINES[t]), pr["engine_code"])
+                if patched != sp[0]:
+                    _set_script(c, patched)
+                    changed += 1
+                if failed:
+                    report.append(f"'{label}': {failed} of your engine edits are outside the code the Grasshopper "
+                                  f"script shares with Forma and could not be placed; they stay in Forma only.")
+            if t == "Modular Plan Generator" and pr.get("design"):
+                report.append(f"'{label}': the brief made in the Plan Designer lives in Forma; in Grasshopper the "
+                              f"script still opens its own window to set the brief.")
+    ghfile.write(root, path)
+    return [f"Saved {os.path.basename(path)} with {changed} change(s) from Forma."] + report
+
+
+def _set_script(c, code):
+    sc = c.chunk("Script")
+    if sc is not None and sc.item("Text") is not None:
+        sc.set_item("Text", base64.b64encode(code.encode("utf-8")).decode("ascii"), 10)
+        return
+    for key in ("CodeInput", "ScriptSource", "Code"):
+        if c.item(key) is not None:
+            c.set_item(key, code, 10)
+            return

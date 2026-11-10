@@ -1,6 +1,7 @@
 # Download Forma (ready to install)
 
-**Current version: Forma 0.7.0** (adds Grasshopper import, 3D space syntax and the modular plan generator).
+**Current version: Forma 0.8.0**: layers with sublayers, line weights and per-object hide / lock / colour; a
+script editor; the Plan Designer; and saving node graphs back to Grasshopper.
 
 Pick your computer and click the link. The download starts straight away. These are complete apps: you
 don't need Python or anything else.

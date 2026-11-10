@@ -17,6 +17,43 @@ from . import vga3d
 from . import planlib
 
 UNIT_TO_M = {"mm": 0.001, "cm": 0.01, "m": 1.0, "in": 0.0254, "ft": 0.3048}
+
+# Node type -> engine module whose code can be edited from the node's "Edit code" window
+ENGINES = {"Space Syntax 3D (voxel VGA)": "vga3d", "Modular Plan Generator": "planlib"}
+_ENGINE_CACHE: dict = {}
+
+
+def engine_source(modname):
+    """Built-in source of an engine module (works in the packaged app too)."""
+    import inspect
+    import os
+    import sys
+    mod = {"vga3d": vga3d, "planlib": planlib}[modname]
+    try:
+        return inspect.getsource(mod)
+    except (OSError, TypeError):
+        base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        for p in (os.path.join(base, "forma_src", modname + ".py"),
+                  os.path.join(os.path.dirname(__file__), modname + ".py")):
+            if os.path.exists(p):
+                return open(p, encoding="utf-8").read()
+    return "# source not available in this build\n"
+
+
+def engine(modname, props):
+    """The engine module to use: the node's edited code if it has any, else the built-in module."""
+    code = (props or {}).get("engine_code")
+    if not code:
+        return {"vga3d": vga3d, "planlib": planlib}[modname]
+    key = (modname, hash(code))
+    mod = _ENGINE_CACHE.get(key)
+    if mod is None:
+        import types
+        mod = types.ModuleType(f"forma_user_{modname}")
+        exec(compile(code, f"<{modname} (edited)>", "exec"), mod.__dict__)
+        _ENGINE_CACHE.clear()
+        _ENGINE_CACHE[key] = mod
+    return mod
 _VGA_CACHE: dict = {}
 
 
@@ -70,8 +107,9 @@ def _band_mesh(band, vals, origin, s, k_level, label):
       desc="Voxel visibility graph analysis of a 3D interior (walkability on the floor band, visibility at eye "
            "level). Ported from the Grasshopper script 'Space Syntax Master v03'. Results are cached, so changing "
            "only Metric is instant.")
-def n_vga3d(Space=None, Furniture=None, _progress=None, **kw):
-    names = vga3d.METRIC_NAMES
+def n_vga3d(Space=None, Furniture=None, _progress=None, _props=None, **kw):
+    V3 = engine("vga3d", _props)
+    names = V3.METRIC_NAMES
     metric_names = [f"{i}: {n}" for i, n in enumerate(names)]
     run = _flag(kw.get("Run"), True)
     s = num(kw.get("Voxel Size"), 200.0) or 200.0
@@ -89,7 +127,7 @@ def n_vga3d(Space=None, Furniture=None, _progress=None, **kw):
     furn_tris = _tris([g for g in flatten(Furniture or []) if isinstance(g, Geom)])
     if not len(space_tris):
         raise ValueError("Space has no surfaces to analyse")
-    sig = (round(s, 6), eb, round(rad, 6), want_choice, vis3d, space_tris.shape, furn_tris.shape,
+    sig = (hash((_props or {}).get("engine_code", "")), round(s, 6), eb, round(rad, 6), want_choice, vis3d, space_tris.shape, furn_tris.shape,
            tuple(np.round(space_tris.reshape(-1, 3).min(0), 4)), tuple(np.round(space_tris.reshape(-1, 3).max(0), 4)),
            float(np.round(space_tris.sum(), 3)), float(np.round(furn_tris.sum(), 3)) if len(furn_tris) else 0.0)
     log_lines = []
@@ -103,7 +141,7 @@ def n_vga3d(Space=None, Furniture=None, _progress=None, **kw):
     if core is None:
         if not run:
             return {"Metric Names": metric_names, "Progress": "Idle (Run is off and nothing is cached)."}
-        core = vga3d._compute_core(space_tris, furn_tris, s, eb, R2, want_choice, log, vis3d)
+        core = V3._compute_core(space_tris, furn_tris, s, eb, R2, want_choice, log, vis3d)
         _VGA_CACHE.clear()
         _VGA_CACHE[sig] = core
     else:
@@ -218,13 +256,13 @@ def parse_links(text, nodes):
     return edges
 
 
-def code_check(nodes, short, long_, height):
+def code_check(nodes, short, long_, height, PL=planlib):
     out = []
     for n in nodes:
-        st = planlib.STANDARDS.get(n["type"])
+        st = PL.STANDARDS.get(n["type"])
         if not st:
             continue
-        w, d = planlib.footprint(n["type"], n["modules"], short, long_)
+        w, d = PL.footprint(n["type"], n["modules"], short, long_)
         msgs = []
         if w * d + 1e-9 < st["min_area"]:
             msgs.append(f"area {w * d:.2f} m2 < {st['min_area']:.2f} m2")
@@ -248,7 +286,8 @@ def code_check(nodes, short, long_, height):
       desc="Packs a brief of modular rooms into several plan options, keeping linked rooms touching. Rooms grow "
            "along the module's short side, corridors along the long side. Ported from the Grasshopper script "
            "'Modular Plan Generator' (its indicative Australian room standards are used for Code Check).")
-def n_plans(Brief=None, Links=None, _progress=None, _units="mm", **kw):
+def n_plans(Brief=None, Links=None, _progress=None, _units="mm", _props=None, **kw):
+    PL = engine("planlib", _props)
     u = UNIT_TO_M.get(_units, 0.001)
     a = num(kw.get("Module A"), 2400) * u
     b = num(kw.get("Module B"), 3600) * u
@@ -261,17 +300,17 @@ def n_plans(Brief=None, Links=None, _progress=None, _units="mm", **kw):
                "nodes": nodes, "edges": edges}
     if _progress:
         _progress(0.1)
-    plans, adj = planlib.generate_plans(payload)
+    plans, adj = PL.generate_plans(payload)
     gap = num(kw.get("Gap"), 4000) * u
     extrude = _flag(kw.get("Extrude"))
     k = 1.0 / u
     rooms, outlines, envs, codes, lines = [], [], [], [], []
     cursor = 0.0
     for pi, placed in enumerate(plans):
-        x0, y0, x1, y1 = planlib.bbox_of(placed)
+        x0, y0, x1, y1 = PL.bbox_of(placed)
         bw, bh = x1 - x0, y1 - y0
         used = sum(r.area for r in placed)
-        _, miss = planlib.plan_score(placed, adj)
+        _, miss = PL.plan_score(placed, adj)
         pname = "PLAN_%02d" % (pi + 1)
         plan_rooms, plan_out, plan_codes = [], [], []
         for r in placed:
@@ -280,12 +319,16 @@ def n_plans(Brief=None, Links=None, _progress=None, _units="mm", **kw):
             crv = G.polyline(pts, closed=True)
             crv.name = f"{pname}_{r.code}"
             crv.data["role"] = r.type
+            root = getattr(PL, "ROOT_LAYER", "GH_PLANS")
+            crv.data["bake_layer"] = f"{root}::{pname}::{r.code}"
+            crv.data["bake_color"] = "#%02x%02x%02x" % tuple(getattr(PL, "TYPE_COLOUR", {}).get(r.type, (150, 150, 150)))
             if extrude:
                 body = G.extrude(crv, (0, 0, h * k * 0.98))
             else:
                 body = G.planar_surface(crv)
             body.name = crv.name
             body.data["role"] = r.type
+            body.data["bake_layer"], body.data["bake_color"] = crv.data["bake_layer"], crv.data["bake_color"]
             plan_rooms.append(body)
             plan_out.append(crv)
             plan_codes.append(f"{pname} {r.code} {r.w:.2f}x{r.d:.2f} m = {r.area:.1f} m2")
@@ -293,6 +336,8 @@ def n_plans(Brief=None, Links=None, _progress=None, _units="mm", **kw):
                           (cursor * k, bh * k, 0)], closed=True)
         env.name = pname + "_ENVELOPE"
         env.data["role"] = "envelope"
+        env.data["bake_layer"] = f"{getattr(PL, 'ROOT_LAYER', 'GH_PLANS')}::{pname}::ENVELOPE"
+        env.data["bake_color"] = "#5a5a5a"
         rooms.append(plan_rooms)
         outlines.append(plan_out)
         envs.append(env)
@@ -302,7 +347,7 @@ def n_plans(Brief=None, Links=None, _progress=None, _units="mm", **kw):
         cursor += bw + gap
     header = ("Module %.2f x %.2f m, height %.2f m  |  %d spaces  |  %d plans"
               % (min(a, b), max(a, b), h, len(nodes), len(plans)))
-    checks = code_check(nodes, min(a, b), max(a, b), h)
+    checks = code_check(nodes, min(a, b), max(a, b), h, PL)
     return {"Rooms": rooms, "Outlines": outlines, "Envelopes": envs, "Room Codes": codes,
             "Report": header + "\n" + "\n".join(lines),
             "Code Check": "\n".join(checks) if checks else "All spaces meet the indicative minimums."}

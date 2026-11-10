@@ -140,7 +140,13 @@ def solve(graph, cache, dirty, refs, defs, emit):
         except Exception as e:
             results.pop(nid, None)
             tb = traceback.format_exc(limit=3)
-            emit("error", nid, f"{type(e).__name__}: {e}", tb)
+            where = ""
+            for fr in traceback.extract_tb(e.__traceback__):   # point at the user's script line, if any
+                if fr.filename.startswith("<python node>") or fr.filename.endswith("(edited)>"):
+                    where = f" (line {fr.lineno})"
+            if isinstance(e, SyntaxError) and e.lineno:
+                where = f" (line {e.lineno})"
+            emit("error", nid, f"{type(e).__name__}: {e}{where}", tb)
 
 
 def worker_main(inq, outq):

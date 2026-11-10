@@ -35,14 +35,25 @@ def export_3dm(doc, path, objects=None):
     layer_index = {}
 
     def get_layer(name, space):
+        """Index of a (nested) layer; parents are created first and linked with ParentLayerId."""
         key = (PREFIX_2D + name) if space == "2d" else name
         if key not in layer_index:
+            parts = key.split("::")
+            parent_id = None
+            if len(parts) > 1:
+                pidx = get_layer("::".join(name.split("::")[:-1]), space) if "::" in name else get_layer(parts[0], "3d")
+                parent_id = f.Layers[pidx].Id
             src = doc.layer(name)
             L = r3.Layer()
-            L.Name = key
+            L.Name = parts[-1]
             L.Color = _rgb(src.color if src else "#d0d0d0")
+            if parent_id is not None:
+                L.ParentLayerId = parent_id
             if src is not None:
                 L.Visible = src.visible
+                L.Locked = src.locked
+                if src.weight:
+                    L.PlotWeight = float(src.weight)
             layer_index[key] = f.Layers.Add(L)
         return layer_index[key]
 
@@ -55,6 +66,16 @@ def export_3dm(doc, path, objects=None):
         a.LayerIndex = get_layer(g.layer, g.space)
         if g.name:
             a.Name = g.name
+        if g.data.get("attr_color"):
+            a.ColorSource = r3.ObjectColorSource.ColorFromObject
+            a.ObjectColor = _rgb(g.data["attr_color"])
+        if g.data.get("attr_weight"):
+            a.PlotWeightSource = r3.ObjectPlotWeightSource.PlotWeightFromObject
+            a.PlotWeight = float(g.data["attr_weight"])
+        if g.data.get("hidden"):
+            a.Visible = False
+        if g.data.get("locked"):
+            a.Mode = r3.ObjectMode.Locked
         if g.kind == "brep":
             from . import brep as B
             objs, nfall = B.rhino_objects(g, r3)
@@ -170,7 +191,22 @@ def import_3dm(path):
         if lname not in seen_layers:
             src = f.Layers[idx] if 0 <= idx < len(names) else None
             seen_layers[lname] = Layer(lname, _hex(src.Color) if src else "#d0d0d0",
-                                       bool(src.Visible) if src else True)
+                                       bool(src.Visible) if src else True,
+                                       bool(getattr(src, "Locked", False)) if src else False,
+                                       max(0.0, float(getattr(src, "PlotWeight", 0.0) or 0.0)) if src else 0.0)
+        at = o.Attributes
+        extra = {}
+        try:
+            if at.ColorSource == r3.ObjectColorSource.ColorFromObject:
+                extra["attr_color"] = _hex(at.ObjectColor)
+            if at.PlotWeightSource == r3.ObjectPlotWeightSource.PlotWeightFromObject and at.PlotWeight > 0:
+                extra["attr_weight"] = float(at.PlotWeight)
+            if not at.Visible or at.Mode == r3.ObjectMode.Hidden:
+                extra["hidden"] = True
+            if at.Mode == r3.ObjectMode.Locked:
+                extra["locked"] = True
+        except Exception:
+            pass
         name = o.Attributes.Name or ""
         try:
             gs = from_rhino(o.Geometry)
@@ -182,6 +218,7 @@ def import_3dm(path):
         groups = list(o.Attributes.GetGroupList() or []) if o.Attributes.GroupCount else []
         for g in gs:
             g.layer, g.space, g.name = lname, space, name
+            g.data.update(extra)
             if groups and g.kind == "brep":
                 g.data["_group"] = groups[0]
             out.append(g)

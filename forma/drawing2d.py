@@ -30,20 +30,21 @@ def sheet_from_draft(view2d):
             continue
         try:
             vg = view2d._vg(g)
-            layer = doc.objects[owner].layer if owner in doc.objects else "0"
+            layer = doc.objects[owner].layer.replace("::", "$") if owner in doc.objects else "0"
             color = col if col.lower() not in ("#d0d0d0", "#ffffff", "#e6e6e6") else "#000000"
+            wmm = doc.weight_of(owner)
             if vg.kind == "point":
                 continue
             if vg.kind in ("mesh", "brep"):
                 segs = G.feature_edges(vg)
                 if segs:
                     S = np.array([[a[:2], b[:2]] for a, b in segs], float)
-                    items.append({"type": "lines", "segs": S, "layer": layer, "color": color, "width": 0.25})
+                    items.append({"type": "lines", "segs": S, "layer": layer, "color": color, "width": wmm or 0.25})
             else:
                 s = np.asarray(vg.sample(), float)[:, :2]
                 if len(s) > 1:
                     items.append({"type": "poly", "pts": s, "closed": bool(getattr(vg, "closed", False)),
-                                  "layer": layer, "color": color, "width": 0.35})
+                                  "layer": layer, "color": color, "width": wmm or 0.35})
         except Exception:
             continue
     return {"title": f"Draft - {view2d.view_name} view", "items": items}
@@ -235,6 +236,17 @@ def export_svg(sheet, path, shaded=False):
     qp.end()
 
 
+_DXF_WEIGHTS = [5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106, 120, 140, 158, 200, 211]
+
+
+def _dxf_weight(mm):
+    """Nearest standard DXF lineweight (hundredths of a mm)."""
+    if not mm:
+        return 25
+    v = mm * 100
+    return min(_DXF_WEIGHTS, key=lambda w: abs(w - v))
+
+
 def export_dxf(sheets, path, units="mm"):
     """True-scale 2D linework in model space (one drawing per sheet, side by side, each on its own layers)."""
     import ezdxf
@@ -253,7 +265,9 @@ def export_dxf(sheets, path, units="mm"):
                 rgb = QtGui.QColor(it["color"])
                 doc.layers.add(lay, true_color=colors.rgb2int((rgb.red(), rgb.green(), rgb.blue())),
                                lineweight=int(round(max(it["width"], 0.13) * 100)))
-            attrs = {"layer": lay}
+            attrs = {"layer": lay, "lineweight": _dxf_weight(it["width"])}
+            rgb = QtGui.QColor(it["color"])
+            attrs["true_color"] = colors.rgb2int((rgb.red(), rgb.green(), rgb.blue()))
             if it["type"] == "lines":
                 for a, b in it["segs"]:
                     msp.add_line((a[0] + dx, a[1]), (b[0] + dx, b[1]), dxfattribs=attrs)

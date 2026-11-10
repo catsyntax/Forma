@@ -60,6 +60,8 @@ rebuilds in the 3D view. Load them from **Analysis examples** in the Nodes toolb
 | ![Daylight factor](docs/screenshots/nodes_daylight.png) **Daylight factor** of a room | ![Space syntax](docs/screenshots/nodes_space_syntax.png) **Space syntax**: visibility graph |
 | ![Shadows](docs/screenshots/nodes_shadows.png) **Shadow study** | ![Solar gains](docs/screenshots/nodes_solar_gains.png) **Solar gains** by orientation |
 | ![Shortcuts](docs/screenshots/settings_shortcuts.png) **Your own shortcuts** for every command (Settings → Shortcuts) | ![Light theme](docs/screenshots/model_light_theme.png) **Light theme** |
+| ![Plan Designer](docs/screenshots/plan_designer.png) **Plan Designer**: rooms, attachments and an adjacency graph drive the Modular Plan Generator | ![Plans on layers](docs/screenshots/plans_baked_layers.png) **Plans baked to nested layers** (GH_PLANS › PLAN_01 › rooms) |
+| ![Layers](docs/screenshots/layers_panel.png) **Layers**: sublayers, objects listed per layer, line weights, per-object colour, hide and lock | ![Script editor](docs/screenshots/script_editor.png) **Script editor**: highlighting, Run without closing, errors with line numbers |
 
 **NURBS-based.** Curves are NURBS (lines, arcs and circles convert exactly). Surfaces and solids are exact
 NURBS boundary representations (B-reps) built on **OpenCascade**, the open-source kernel behind FreeCAD,
@@ -213,7 +215,19 @@ rebuilds a Grasshopper definition as a Forma node graph:
   anything else becomes a labelled placeholder, listed in the import report. Wires are rebuilt.
 - Choose the Rhino file's units on import; length sliders feeding the native tools are converted.
 
+- **Edit and run the code**: double-click a Python node (or right-click → *Edit code…*) for the script editor:
+  line numbers, highlighting, *Run* (Ctrl+Enter) without closing, printed output and errors with their line.
+  The two ported tools have editable engines too (right-click → *Edit engine code…*), saved with the project.
+- **Save back to Grasshopper**: *Nodes → Save to Grasshopper…* writes the imported definition again with the
+  slider, toggle and panel values and the Python code you changed in Forma (engine edits are merged into the
+  original script). Unedited parts stay byte-for-byte as they were, so it opens in Grasshopper as before.
+
 ### Space planning and 3D space syntax
+- **Plan Designer** (double-click the Modular Plan Generator node): set the module, add living rooms,
+  bedrooms, kitchens, storage and corridors, size each by modules or by area, attach kitchens / bathrooms /
+  storage, see warnings against the room standards, and arrange the adjacency graph in layers (link, unlink,
+  lock to layer, auto arrange). *Generate plans* computes the options and can bake them to
+  `GH_PLANS::PLAN_xx::<room>` layers, replacing earlier ones.
 - **Modular Plan Generator** packs a brief of modular rooms (one per line: `code type modules [attached-to]`,
   e.g. `B1_BA bathroom 1 B1`) into several plan options, keeping linked rooms touching. Rooms grow along
   the module's short side, corridors along the long side. *Links* sets adjacencies (`L1-B1, L1-C1`).
@@ -222,6 +236,16 @@ rebuilds a Grasshopper definition as a Forma node graph:
 - **Space Syntax 3D (voxel VGA)** voxelises a closed AIR volume (minus furniture) and computes 15 VGA
   measures on the walkable floor band and at eye level, with sightlines blocked by walls and furniture at
   any height. Results are cached, so switching *Metric* is instant.
+
+### Layers and object display
+- **Sublayers** (`Parent::Child`, like Rhino) in a tree, with each layer's objects listed under it. Drag objects
+  onto a layer to move them; drag a layer onto another to nest it. Double-click makes a layer current.
+- Per layer: **on/off, lock, colour, line weight** (mm, used on screen and in PDF / DXF / DWG and .3dm).
+  Hiding or locking a parent applies to its sublayers.
+- Per object: **own colour, own line weight, hide, lock** (Layers panel, Properties, or the commands
+  *Hide* Ctrl+H, *Show* Ctrl+Alt+H, *Lock* Ctrl+L, *Unlock* Ctrl+Alt+L). Per component: hide or lock every instance.
+- The Layers panel is available in every workspace (Draft, Model, Components, Nodes). Nested layers, object
+  colours, weights and hidden/locked states round-trip through Rhino .3dm files.
 
 ### Analysis libraries
 - **Climate:** Location (20 city presets), Sun Vector, Sun Path, Shadow Study (shadows on the ground at any hour).

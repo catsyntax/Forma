@@ -45,6 +45,11 @@ NODE_TOOLS = ["Move", "Copy", "Rotate", "Scale", "|", "Box", "Extrude", "Loft", 
 DRAFT_VIEWS = ["Top", "Bottom", "Front", "Back", "Left", "Right"]
 
 
+CMD_KEYS = {"Hide": "Ctrl+H", "Show": "Ctrl+Alt+H", "Lock": "Ctrl+L", "Unlock": "Ctrl+Alt+L"}   # Rhino's keys
+if sys.platform == "darwin":
+    CMD_KEYS["Hide"] = "Ctrl+Shift+Alt+H"   # Cmd+H is macOS "Hide application"
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, settings: Settings | None = None):
         super().__init__()
@@ -264,7 +269,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sl.setSpacing(0)
         split.addWidget(side)
         split.setStretchFactor(0, 1)
-        split.setSizes([1200, 300])
+        split.setSizes([1160, 360])
         self.sidebar_host[space] = sl
         self.edit_banner = getattr(self, "edit_banner", {})
         banner = QtWidgets.QWidget()
@@ -338,6 +343,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ntb = self._toolbar(NODE_TOOLS, "3d")
         ntb.addSeparator()
         ntb.addAction("Import Grasshopper...").triggered.connect(lambda: self.import_grasshopper())
+        ntb.addAction("Save to Grasshopper...").triggered.connect(lambda: self.nodes.export_grasshopper())
         ntb.addAction("Example: tower").triggered.connect(lambda: self.nodes.load_demo())
         ex = QtWidgets.QComboBox()
         ex.addItem("Analysis examples...")
@@ -415,11 +421,10 @@ class MainWindow(QtWidgets.QMainWindow):
         sl.setSpacing(0)
         self.sidebar_host["3d"] = sl
         self.right_stack.addWidget(side)
-        self.right_stack.addWidget(self.components.details_panel)
         self.right_stack.setMinimumWidth(260)
         split.addWidget(self.right_stack)
         split.setStretchFactor(1, 1)
-        split.setSizes([280, 1100, 320])
+        split.setSizes([280, 1060, 360])
         lay.addWidget(split, 1)
         return page
 
@@ -435,8 +440,15 @@ class MainWindow(QtWidgets.QMainWindow):
             tabs = QtWidgets.QTabWidget()
             tabs.addTab(self.props, "Properties")
             tabs.addTab(self.layers, "Layers")
+            tabs.addTab(self.components.details_panel, "Component")
             self._side_tabs = tabs
         host.addWidget(tabs)
+        comp = getattr(self, "persona", 0) == 2
+        tabs.setTabVisible(2, comp)
+        if comp and tabs.currentIndex() == 0:
+            tabs.setCurrentIndex(2)
+        elif not comp and tabs.currentIndex() == 2:
+            tabs.setCurrentIndex(0)
 
     # ================================================================ personas
     def set_persona(self, i):
@@ -454,7 +466,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.left_stack.setVisible(i in (2, 3))
             if i in (2, 3):
                 self.left_stack.setCurrentIndex(i - 2)
-            self.right_stack.setCurrentIndex(1 if i == 2 else 0)
+            self.right_stack.setCurrentIndex(0)
             self.nodes.setVisible(i == 3)
             if i == 3:
                 h = max(self.center_split.height(), 600)
@@ -634,6 +646,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m.addSeparator()
         self._act(m, "Import...", self.file_import, "Ctrl+I")
         self._act(m, "Import Grasshopper definition (.gh, .ghx)...", lambda: self.import_grasshopper())
+        self._act(m, "Save nodes back to Grasshopper (.gh)...", lambda: self.nodes.export_grasshopper())
         self._act(m, "Export...", self.file_export, "Ctrl+E")
         self._act(m, "Export selected...", lambda: self.file_export(selected=True), "Ctrl+Shift+E")
         self._act(m, "Export 2D drawing (PDF, DWG, DXF, PNG, SVG)...", self.export_drawing, "Ctrl+Alt+E")
@@ -718,8 +731,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if name in seen or name == "GumballValue":
                 continue
             seen.add(name)
-            acts.append(("cmd:" + name, name, getattr(cmd, "group", "Commands") or "Commands", "",
-                         lambda n=name: self.run_command(n)))
+            acts.append(("cmd:" + name, name, getattr(cmd, "group", "Commands") or "Commands",
+                         CMD_KEYS.get(name, ""), lambda n=name: self.run_command(n)))
         return acts
 
     def apply_shortcuts(self):
@@ -871,7 +884,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.doc.checkpoint("Import " + os.path.basename(path))
         for l in layers:
             if not self.doc.layer(l.name):
-                self.doc.layers.append(l)
+                nl = self.doc.add_layer(l.name, l.color)   # also creates missing parent layers
+                nl.visible, nl.locked, nl.weight = l.visible, l.locked, l.weight
         self.doc.add(geoms)
         self.doc.notify("layers")
         self.message(f"Imported {len(geoms)} objects from {os.path.basename(path)}." +

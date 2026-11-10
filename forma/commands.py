@@ -679,6 +679,46 @@ def cmd_unisolate(ctx):
     yield
 
 
+@command("Hide", ("hideobject",), group="View", help="Hide the selected objects (Show brings them back).")
+def cmd_hide(ctx):
+    objs = yield GetObjects("Select objects to hide")
+    ctx.doc.set_attr([g.id for g in objs], "hidden", True, "Hide")
+    ctx.msg(f"Hid {len(objs)} object(s). Run Show to show hidden objects again.")
+
+
+@command("Show", ("unhide",), group="View", help="Show all hidden objects.")
+def cmd_show(ctx):
+    ids = [g.id for g in ctx.doc.hidden_objects()]
+    if not ids:
+        ctx.msg("No hidden objects.")
+        return
+    ctx.doc.set_attr(ids, "hidden", None, "Show")
+    ctx.doc.selection = set(ids)
+    ctx.doc.notify("selection")
+    ctx.msg(f"Showing {len(ids)} hidden object(s) (selected).")
+    return
+    yield
+
+
+@command("Lock", ("lockobject",), group="View", help="Lock the selected objects: visible but not selectable.")
+def cmd_lock(ctx):
+    objs = yield GetObjects("Select objects to lock")
+    ctx.doc.set_attr([g.id for g in objs], "locked", True, "Lock")
+    ctx.msg(f"Locked {len(objs)} object(s). Run Unlock to unlock them.")
+
+
+@command("Unlock", ("unlockall",), group="View", help="Unlock all locked objects.")
+def cmd_unlock(ctx):
+    ids = [g.id for g in ctx.doc.objects.values() if g.data.get("locked")]
+    if not ids:
+        ctx.msg("No locked objects.")
+        return
+    ctx.doc.set_attr(ids, "locked", None, "Unlock")
+    ctx.msg(f"Unlocked {len(ids)} object(s).")
+    return
+    yield
+
+
 @command("Offset", ("o",), group="Edit", help="Offset a curve (in the XY plane).")
 def cmd_offset(ctx):
     crv = yield GetObjects("Select curve to offset", filter=lambda g: g.is_curve, single=True)

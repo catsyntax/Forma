@@ -6,6 +6,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import geometry as G
+from .document import display_px
 from .geometry import P
 
 SNAP_PX = 12
@@ -161,7 +162,8 @@ class View2D(QtWidgets.QWidget):
                 color = QtGui.QColor(c["selection"] if owner in sel else "#1b1b1d")
             if dim:
                 color.setAlphaF(0.25)
-            pen = QtGui.QPen(color, 2.0 if owner in sel else 1.4)
+            lw = display_px(self.doc.weight_of(owner), 1.4)
+            pen = QtGui.QPen(color, max(lw, 2.0) if owner in sel else lw)
             pen.setCosmetic(True)
             qp.setPen(pen)
             if g.kind == "point":

@@ -163,8 +163,9 @@ def test_grasshopper_import(tmp_path):
     <chunk name="Object" index="1"><items count="2">
       <item name="GUID" type_name="gh_guid">c9b2d725-6f87-4b07-af90-bd9aefef68eb</item>
       <item name="Name" type_name="gh_string">Script</item></items>
-     <chunks count="1"><chunk name="Container"><items count="1">
-       <item name="NickName" type_name="gh_string">double it</item></items>
+     <chunks count="1"><chunk name="Container"><items count="2">
+       <item name="NickName" type_name="gh_string">double it</item>
+       <item name="InstanceGuid" type_name="gh_guid">44444444-4444-4444-4444-444444444444</item></items>
       <chunks count="2">
        <chunk name="ParameterData"><items count="0"/><chunks count="2">
         <chunk name="InputParam" index="0"><items count="3">
@@ -186,3 +187,50 @@ def test_grasshopper_import(tmp_path):
     py = next(n for n in g["nodes"].values() if n["type"] == "Python")
     assert py["props"]["code"] == "a = x * 2" and py["props"]["inputs"] == ["x"] and py["props"]["outputs"] == ["a"]
     assert len(g["wires"]) == 1 and g["wires"][0][3] == "x"
+
+
+def test_grasshopper_write_roundtrip_and_save_back(tmp_path):
+    """.gh writer reproduces what it reads; edited slider values and code go back into the definition."""
+    import base64
+    from forma import ghfile, ghimport
+    test_grasshopper_import(tmp_path)          # writes t.ghx
+    src = tmp_path / "t.ghx"
+    root = ghfile.read(str(src))
+    out = tmp_path / "t.gh"
+    ghfile.write(root, str(out))
+    again = ghfile.read(str(out))
+    assert ghfile.to_bytes(again) == ghfile.to_bytes(root)
+    g, _ = ghimport.convert(str(out))
+    for n in g["nodes"].values():
+        if n["type"] == "Number Slider":
+            n["props"]["value"] = 7.0
+        if n["type"] == "Python":
+            n["props"]["code"] = "a = x * 3"
+    saved = tmp_path / "saved.gh"
+    report = ghimport.export(g, str(saved))
+    assert "2 change" in report[0]
+    g2, _ = ghimport.convert(str(saved))
+    vals = {n["type"]: n["props"] for n in g2["nodes"].values()}
+    assert vals["Number Slider"]["value"] == 7.0 and vals["Python"]["code"] == "a = x * 3"
+
+
+def test_layers_tree_and_object_attributes():
+    from forma.document import Document
+    from forma import geometry as G
+    d = Document()
+    d.add_layer("A::B::C", "#ff0000")
+    assert [l.name for l in d.layers] == ["Default", "A", "A::B", "A::B::C"]
+    g = G.point((0, 0, 0))
+    g.layer = "A::B::C"
+    h = G.point((1, 0, 0))
+    d.add([g, h])
+    d.layer("A").visible = False
+    assert [x.id for x in d.visible("3d")] == [h.id]
+    d.layer("A").visible = True
+    d.set_attr([g.id], "locked", True)
+    assert g.id not in {x.id for x in d.selectable("3d")}
+    d.set_attr([g.id], "attr_weight", 0.7)
+    assert d.weight_of(g.id) == 0.7
+    assert d.rename_layer("A", "Z") and d.objects[g.id].layer == "Z::B::C"
+    assert d.move_layer("Z::B", None) and d.objects[g.id].layer == "B::C"
+    assert d.delete_layer("B") and d.objects[g.id].layer == "Default"

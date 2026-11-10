@@ -15,18 +15,26 @@ import xml.etree.ElementTree as ET
 class Chunk:
     def __init__(self, name, index=-1):
         self.name, self.index = name, index
-        self.items: list[tuple[str, int, object]] = []
+        self.items: list[tuple] = []          # (name, index, value, type code)
         self.chunks: list[Chunk] = []
 
     # ---- lookups
     def item(self, name, index=-1, default=None):
-        for n, i, v in self.items:
+        for n, i, v, *_ in self.items:
             if n == name and (index == -1 or i == index):
                 return v
         return default
 
     def items_named(self, name):
-        return [(i, v) for n, i, v in self.items if n == name]
+        return [(i, v) for n, i, v, *_ in self.items if n == name]
+
+    def set_item(self, name, value, type_code=None, index=-1):
+        """Replace an item's value (keeping its type) or add it."""
+        for k, (n, i, v, *t) in enumerate(self.items):
+            if n == name and (index == -1 or i == index):
+                self.items[k] = (n, i, value, t[0] if t else (type_code or _guess_type(value)))
+                return
+        self.items.append((name, index, value, type_code or _guess_type(value)))
 
     def chunk(self, name, index=-1):
         for c in self.chunks:
@@ -131,7 +139,7 @@ class _Reader:
         nitems, nchunks = self.i32(), self.i32()
         for _ in range(nitems):
             name, idx, t = self.string(), self.i32(), self.i32()
-            c.items.append((name, idx, self.value(t)))
+            c.items.append((name, idx, self.value(t), t))
         for _ in range(nchunks):
             c.chunks.append(self.chunk())
         return c
@@ -178,12 +186,134 @@ def _xml_chunk(el) -> Chunk:
                 v = tuple(int(it.findtext(k, "0")) for k in ("Major", "Minor", "Revision"))
             else:
                 v = txt
-            c.items.append((name, idx, v))
+            code = {"gh_drawing_rectanglef": 35, "gh_drawing_pointf": 31, "gh_version": 80}.get(t, _XML_TYPES.get(t, 10))
+            c.items.append((name, idx, v, code))
     chunks = el.find("chunks")
     if chunks is not None:
         for ch in chunks.findall("chunk"):
             c.chunks.append(_xml_chunk(ch))
     return c
+
+
+def _guess_type(v):
+    if isinstance(v, bool):
+        return 1
+    if isinstance(v, int):
+        return 3
+    if isinstance(v, float):
+        return 6
+    if isinstance(v, (bytes, bytearray)):
+        return 20
+    return 10
+
+
+# ------------------------------------------------------------------ writing (.gh)
+class _Writer:
+    def __init__(self):
+        self.b = bytearray()
+
+    def i32(self, v):
+        self.b += struct.pack("<i", v)
+
+    def string(self, s):
+        raw = s.encode("utf-8")
+        n = len(raw)
+        while True:
+            byte = n & 0x7F
+            n >>= 7
+            self.b.append(byte | (0x80 if n else 0))
+            if not n:
+                break
+        self.b += raw
+
+    def value(self, t, v):
+        p = lambda fmt, *a: self.b.extend(struct.pack("<" + fmt, *a))
+        if t == 1:
+            self.b.append(1 if v else 0)
+        elif t == 2:
+            self.b.append(int(v) & 0xFF)
+        elif t == 3:
+            p("i", int(v))
+        elif t in (4, 8):
+            p("q", int(v))
+        elif t == 5:
+            p("f", float(v))
+        elif t == 6:
+            p("d", float(v))
+        elif t == 7:
+            self.b += bytes(v)
+        elif t == 9:
+            self.b += uuid.UUID(str(v)).bytes_le
+        elif t == 10:
+            self.string(str(v))
+        elif t in (20, 37):
+            self.i32(len(v))
+            self.b += bytes(v)
+        elif t == 21:
+            self.i32(len(v))
+            if v:
+                p("%dd" % len(v), *v)
+        elif t in (30, 32):
+            p("ii", *v)
+        elif t in (31, 33):
+            p("ff", *v)
+        elif t == 34:
+            p("iiii", *v)
+        elif t == 35:
+            p("ffff", *v)
+        elif t == 36:
+            p("I", int(v))
+        elif t in (50, 60):
+            p("dd", *v)
+        elif t == 51:
+            p("ddd", *v)
+        elif t in (52, 61):
+            p("dddd", *v)
+        elif t in (70, 71):
+            p("dddddd", *v)
+        elif t == 72:
+            p("ddddddddd", *v)
+        elif t == 80:
+            p("iii", *v)
+        else:
+            raise ValueError(f"cannot write Grasshopper item type {t}")
+
+    def chunk(self, c):
+        self.string(c.name)
+        self.i32(c.index)
+        self.i32(len(c.items))
+        self.i32(len(c.chunks))
+        for name, idx, v, *t in c.items:
+            self.string(name)
+            self.i32(idx)
+            code = t[0] if t else _guess_type(v)
+            self.i32(code)
+            self.value(code, v)
+        for ch in c.chunks:
+            self.chunk(ch)
+
+
+def to_bytes(root: Chunk) -> bytes:
+    """Uncompressed GH_IO archive bytes."""
+    w = _Writer()
+    w.chunk(root)
+    return bytes(w.b)
+
+
+def write(root: Chunk, path: str):
+    """Write a binary .gh file (deflate-compressed GH_IO archive) that Grasshopper opens."""
+    co = zlib.compressobj(9, zlib.DEFLATED, -15)
+    data = co.compress(to_bytes(root)) + co.flush()
+    with open(path, "wb") as f:
+        f.write(data)
+
+
+def read_bytes(raw: bytes) -> Chunk:
+    if raw.lstrip()[:5] in (b"<?xml", b"<Arch"):
+        root = ET.fromstring(raw)
+        top = root if root.tag == "Archive" else root.find("Archive")
+        return _xml_chunk(top)
+    return _read_binary(raw)
 
 
 def read(path: str) -> Chunk:

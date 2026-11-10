@@ -14,6 +14,7 @@ from pyvistaqt import QtInteractor
 from PySide6 import QtCore, QtWidgets
 
 from . import geometry as G
+from .document import display_px
 from .geometry import P
 
 SNAP_PX = 12
@@ -439,9 +440,10 @@ class View3D(QtWidgets.QWidget):
                 col = "#2a2a2e"
             rgb = self._rgb(uniform or col)
             prep = self._prep(g)
-            groups.setdefault(bool(dim), []).append((owner, prep, rgb))
+            w = self.doc.weight_of(owner) if self.doc is not None else 0.0
+            groups.setdefault((bool(dim), w), []).append((owner, prep, rgb))
         out = []
-        for dim, entries in groups.items():
+        for (dim, wmm), entries in groups.items():
             op = (0.25 if dim else 1.0) * opacity_scale
             surf_p, surf_n, surf_t, surf_c, surf_o, surf_co = [], [], [], [], [], []
             seg_p, seg_c, seg_o, seg_co = [], [], [], []
@@ -503,7 +505,8 @@ class View3D(QtWidgets.QWidget):
                 pd = pv.PolyData(P_, lines=np.hstack([np.full((n, 1), 2), np.arange(2 * n).reshape(-1, 2)]).ravel())
                 base = np.vstack(seg_c).copy()
                 pd.point_data["rgb"] = base.copy()
-                a = self.plotter.add_mesh(pd, scalars="rgb", rgb=True, line_width=1.6 if self.shade == "wire" else 1.2,
+                a = self.plotter.add_mesh(pd, scalars="rgb", rgb=True,
+                                          line_width=display_px(wmm, 1.6 if self.shade == "wire" else 1.2),
                                           reset_camera=False, render=False, lighting=False, opacity=op,
                                           pickable=pickable, show_scalar_bar=False)
                 out.append((a, {"pd": pd, "base": base, "pown": np.concatenate(seg_o), "cown": np.concatenate(seg_co),
@@ -512,8 +515,9 @@ class View3D(QtWidgets.QWidget):
                 pd = pv.PolyData(np.vstack(ln_p), lines=np.concatenate(ln_cells))
                 base = np.vstack(ln_c).copy()
                 pd.point_data["rgb"] = base.copy()
-                a = self.plotter.add_mesh(pd, scalars="rgb", rgb=True, line_width=2.2, reset_camera=False, render=False,
-                                          lighting=False, opacity=op, pickable=pickable, show_scalar_bar=False)
+                a = self.plotter.add_mesh(pd, scalars="rgb", rgb=True, line_width=display_px(wmm, 2.2), reset_camera=False,
+                                          render=False, lighting=False, opacity=op, pickable=pickable,
+                                          show_scalar_bar=False)
                 out.append((a, {"pd": pd, "base": base, "pown": np.concatenate(ln_o), "cown": np.array(ln_co, np.int32)}))
             if pt_p:
                 pd = pv.PolyData(np.vstack(pt_p))
